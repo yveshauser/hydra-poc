@@ -88,6 +88,25 @@ let
     # Force a UTF-8 locale because many Haskell programs and tests
     # assume this.
     LANG = "en_US.UTF-8";
+  };
+
+  # A "stack-only" shell which does not use haskell.nix
+  stackShell = pkgs.mkShell {
+    name = "hydra-node-stack-shell";
+
+    buildInputs = libs ++ [
+      pkgs.haskell.compiler.${compiler}
+      pkgs.stack
+      pkgs.git
+      pkgs.pkgconfig
+    ];
+
+    # Ensure that libz.so and other libraries are available to TH splices.
+    LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath libs;
+
+    # Force a UTF-8 locale because many Haskell programs and tests
+    # assume this.
+    LANG = "en_US.UTF-8";
 
     # Make the shell suitable for the stack nix integration
     # <nixpkgs/pkgs/development/haskell-modules/generic-stack-builder.nix>
@@ -96,4 +115,4 @@ let
   };
 
 in
-haskellNixShell // { cabalOnly = cabalShell; }
+haskellNixShell // { cabalOnly = cabalShell; stackOnly = stackShell; }
