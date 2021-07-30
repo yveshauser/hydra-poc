@@ -370,7 +370,7 @@ mustForwardParty ::
   Bool
 mustForwardParty ctx policyId vk =
   traceIfFalse "PT not spent" mustSpendToken
-    && traceIfFalse "PT not produced" (1 == (1 :: Integer))
+    && traceIfFalse "PT not produced" True
  where
   info = scriptContextTxInfo ctx
 
