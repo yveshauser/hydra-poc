@@ -26,18 +26,17 @@ import Plutus.Contract (
   ContractError (..),
   Empty,
   Endpoint,
-  currentSlot,
   endpoint,
   logInfo,
   nextTransactionsAt,
   ownPubKey,
   tell,
-  throwError,
  )
-import Plutus.Contract.StateMachine (StateMachine, StateMachineClient, WaitingResult (..))
+import Plutus.Contract.StateMachine (StateMachine, StateMachineClient)
 import qualified Plutus.Contract.StateMachine as SM
 import qualified Plutus.Contracts.Currency as Currency
 import qualified PlutusTx
+import Plutus.Contract.StateMachine.ThreadToken
 
 data State
   = Setup
@@ -81,14 +80,14 @@ instance Currency.AsCurrencyError HydraPlutusError where
   _CurrencyError = _ThreadTokenError
 
 {-# INLINEABLE hydraStateMachine #-}
-hydraStateMachine :: AssetClass -> StateMachine State Input
-hydraStateMachine _threadToken =
+hydraStateMachine :: ThreadToken -> StateMachine State Input
+hydraStateMachine threadToken =
   -- XXX(SN): This should actually be '(Just threadToken)' as we wan't to have
   -- "contract continuity" as described in the EUTXO paper. While we do have a
   -- fix for the 'runStep' handling now, the current version of plutus does
   -- forge a given 'ThreadToken' upon 'runInitialise' now.. which is not what we
   -- want as we need additional tokens being forged as well (see 'watchInit').
-  SM.mkStateMachine Nothing hydraTransition isFinal
+  SM.mkStateMachine (Just threadToken) hydraTransition isFinal
  where
   isFinal Final{} = True
   isFinal _ = False
@@ -113,7 +112,7 @@ hydraTransition oldState input =
 --   2. Identify the 'state thread token', which should be passed in
 --   transactions transitioning the state machine and provide "contract
 --   continuity"
-typedValidator :: AssetClass -> Scripts.TypedValidator (StateMachine State Input)
+typedValidator :: ThreadToken -> Scripts.TypedValidator (StateMachine State Input)
 typedValidator threadToken =
   let val =
         $$(PlutusTx.compile [||validatorParam||])
@@ -129,7 +128,7 @@ typedValidator threadToken =
 -- machine for off-chain use.
 machineClient ::
   -- | Thread token of the instance
-  AssetClass ->
+  ThreadToken ->
   StateMachineClient State Input
 machineClient threadToken =
   let machine = hydraStateMachine threadToken
@@ -164,19 +163,14 @@ setup = do
   InitParams{contestationPeriod, cardanoPubKeys, hydraParties} <-
     endpoint @"init" @InitParams
 
-  let stateThreadToken = (threadTokenName, 1)
-      participationTokens = map ((,1) . participationTokenName) cardanoPubKeys
-      tokens = stateThreadToken : participationTokens
-
-  -- TODO(SN): replace with SM.getThreadToken
+  let tokens = map ((,1) . participationTokenName) cardanoPubKeys
   logInfo $ "Forging tokens: " <> show @String tokens
   ownPK <- pubKeyHash <$> ownPubKey
   symbol <- Currency.currencySymbol <$> Currency.mintContract ownPK tokens
-  let threadToken = mkThreadToken symbol
-      tokenValues = map (uncurry (singleton symbol)) participationTokens
+  let tokenValues = map (uncurry (singleton symbol)) tokens
+  logInfo $ "Done, PTs currency symbol: " <> show @String symbol
 
-  logInfo $ "Done, our currency symbol: " <> show @String symbol
-
+  threadToken <- SM.getThreadToken
   let client = machineClient threadToken
   void $ SM.runInitialise client Setup mempty
 
@@ -194,6 +188,8 @@ instance Arbitrary InitialParams where
   shrink = genericShrink
   arbitrary = genericArbitrary
 
+-- TODO(SN): This needs to be done differently: observe the full transaction in
+-- which we got the PTs payed to us and decode the 'Initial' datum from there?
 -- | Watch 'initialAddress' (with hard-coded parameters) and report all datums
 -- seen on each run.
 watchInit :: Contract (Last InitialParams) Empty ContractError ()
@@ -218,26 +214,15 @@ watchInit = do
  where
   -- Find candidates for a Hydra Head threadToken 'AssetClass', that is if the
   -- 'TokenName' matches our public key
-  findToken :: PubKeyHash -> TxOutTx -> Maybe AssetClass
+  findToken :: PubKeyHash -> TxOutTx -> Maybe ThreadToken
   findToken pkh txout =
     let value = txOutValue $ txOutTxOut txout
         flat = flattenValue value
         mres = find (\(_, tokenName, amount) -> amount == 1 && tokenName == participationTokenName pkh) flat
      in case mres of
-          Just (symbol, _, _) -> Just $ mkThreadToken symbol
+          Just (_symbol, _, _) -> Nothing -- Just $ mkThreadToken symbol
           Nothing -> Nothing
 
   scriptAddress = Scripts.validatorAddress . typedValidator
 
   lookupDatum token txOutTx = tyTxOutData <$> typeScriptTxOut (typedValidator token) txOutTx
-
--- | Wait for 'Init' transaction to appear on chain and return the observed state of the state machine
-watchStateMachine :: AssetClass -> Contract () Empty HydraPlutusError State
-watchStateMachine threadToken = do
-  logInfo @String $ "watchStateMachine: Looking for transitions of SM: " <> show threadToken
-  let client = machineClient threadToken
-  sl <- currentSlot
-  SM.waitForUpdateUntilSlot client (sl + 10) >>= \case
-    (Timeout _s) -> throwError $ HydraError "Timed out waiting for transaction"
-    ContractEnded -> throwError $ HydraError "Contract ended"
-    (WaitingResult s) -> pure s
