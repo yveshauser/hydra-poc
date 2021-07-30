@@ -8,13 +8,13 @@
 module Hydra.ContractSM where
 
 import Hydra.Prelude hiding (State, find, fmap, foldMap, map, mapMaybe, mempty, pure, zip, ($), (&&), (+), (<$>), (<>), (==))
-import PlutusTx.Prelude hiding (Eq)
+import PlutusTx.Prelude hiding (Eq, mempty)
 
 import Control.Lens (makeClassyPrisms)
 import qualified Data.Map as Map
 import Hydra.Contract.ContestationPeriod (ContestationPeriod)
 import Hydra.Contract.Party (Party)
-import Ledger (CurrencySymbol, PubKeyHash (..), TxOut (txOutValue), TxOutTx (txOutTxOut), Value, pubKeyAddress, pubKeyHash)
+import Ledger (CurrencySymbol, PubKeyHash (..), TxOut (txOutValue), TxOutTx (txOutTxOut), pubKeyAddress, pubKeyHash)
 import Ledger.AddressMap (outputsMapFromTxForAddress)
 import Ledger.Constraints (mustPayToPubKey)
 import qualified Ledger.Typed.Scripts as Scripts
@@ -37,10 +37,10 @@ import qualified Plutus.Contract.StateMachine as SM
 import qualified Plutus.Contracts.Currency as Currency
 import qualified PlutusTx
 import Plutus.Contract.StateMachine.ThreadToken
+import Hydra.Prelude (mempty)
 
 data State
-  = Setup
-  | Initial ContestationPeriod [Party]
+  = Initial ContestationPeriod [Party]
   | Open
   | Final
   deriving stock (Generic, Show)
@@ -49,8 +49,7 @@ data State
 PlutusTx.unstableMakeIsData ''State
 
 data Input
-  = Init ContestationPeriod [(PubKeyHash, Value)] [Party]
-  | CollectCom
+  = CollectCom
   | Abort
   deriving (Generic, Show)
 
@@ -82,11 +81,6 @@ instance Currency.AsCurrencyError HydraPlutusError where
 {-# INLINEABLE hydraStateMachine #-}
 hydraStateMachine :: ThreadToken -> StateMachine State Input
 hydraStateMachine threadToken =
-  -- XXX(SN): This should actually be '(Just threadToken)' as we wan't to have
-  -- "contract continuity" as described in the EUTXO paper. While we do have a
-  -- fix for the 'runStep' handling now, the current version of plutus does
-  -- forge a given 'ThreadToken' upon 'runInitialise' now.. which is not what we
-  -- want as we need additional tokens being forged as well (see 'watchInit').
   SM.mkStateMachine (Just threadToken) hydraTransition isFinal
  where
   isFinal Final{} = True
@@ -96,10 +90,8 @@ hydraStateMachine threadToken =
 hydraTransition :: SM.State State -> Input -> Maybe (SM.TxConstraints SM.Void SM.Void, SM.State State)
 hydraTransition oldState input =
   case (SM.stateData oldState, input) of
-    (Setup, Init contestationPeriod participationTokens parties) ->
-      Just (constraints, oldState{SM.stateData = Initial contestationPeriod parties})
-     where
-      constraints = foldMap (uncurry mustPayToPubKey) participationTokens
+    (Initial{}, CollectCom) ->
+      Just (mempty, oldState{SM.stateData = Open})
     _ -> Nothing
 
 -- | The script instance of the auction state machine. It contains the state
@@ -172,9 +164,8 @@ setup = do
 
   threadToken <- SM.getThreadToken
   let client = machineClient threadToken
-  void $ SM.runInitialise client Setup mempty
-
-  void $ SM.runStep client (Init contestationPeriod (zip cardanoPubKeys tokenValues) hydraParties)
+  let constraints = foldMap (uncurry mustPayToPubKey) $ zip cardanoPubKeys tokenValues
+  void $ SM.runInitialiseWith mempty constraints client (Initial contestationPeriod hydraParties) mempty
   logInfo $ "Triggered Init " <> show @String cardanoPubKeys
 
 -- | Parameters as they are available in the 'Initial' state.
@@ -192,6 +183,9 @@ instance Arbitrary InitialParams where
 -- which we got the PTs payed to us and decode the 'Initial' datum from there?
 -- | Watch 'initialAddress' (with hard-coded parameters) and report all datums
 -- seen on each run.
+--
+-- This needs to be safe! Because if you we identify the *wrong* contract, we
+-- would be committing funds to a potential attacker.
 watchInit :: Contract (Last InitialParams) Empty ContractError ()
 watchInit = do
   logInfo @String $ "watchInit: Looking for an init tx and it's parties"
@@ -200,9 +194,9 @@ watchInit = do
       pkh = pubKeyHash pubKey
   forever $ do
     txs <- nextTransactionsAt address
-    let foundTokens = txs >>= mapMaybe (findToken pkh) . Map.elems . outputsMapFromTxForAddress address
-    logInfo $ "found tokens: " <> show @String foundTokens
-    case foundTokens of
+    let tokenCandidates = txs >>= mapMaybe (findToken pkh) . Map.elems . outputsMapFromTxForAddress address
+    logInfo $ "found token candidates: " <> show @String tokenCandidates
+    case tokenCandidates of
       [token] -> do
         let datums = txs >>= rights . fmap (lookupDatum token) . Map.elems . outputsMapFromTxForAddress (scriptAddress token)
         logInfo @String $ "found init tx(s) with datums: " <> show datums
