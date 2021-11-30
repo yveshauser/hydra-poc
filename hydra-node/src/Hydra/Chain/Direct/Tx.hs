@@ -60,22 +60,29 @@ import Hydra.Ledger (balance)
 import Hydra.Ledger.Cardano (
   BuildTxWith (BuildTxWith),
   CardanoTx,
+  CtxTx,
   IsShelleyBasedEra (shelleyBasedEra),
   KeyWitnessInCtx (KeyWitnessForSpending),
   Lovelace (Lovelace),
   NetworkId,
   NetworkMagic (NetworkMagic),
   TxBodyContent (..),
+  TxIx (TxIx),
+  TxOutDatum (TxOutDatum),
   Utxo,
   Utxo' (Utxo),
   Witness (KeyWitness),
   buildTxBody,
+  getTxId,
   lovelaceToTxOutValue,
   makeTransactionBody,
   mkScriptAddress,
   mkTxOutDatum,
+  toAlonzoData,
+  toCtxUTxOTxOut,
   toLedgerUtxo,
   toMaryValue,
+  toPlutusData,
   toShelleyTxIn,
   toShelleyTxOut,
   utxoPairs,
@@ -138,6 +145,7 @@ initTx ::
   Api.TxIn ->
   Api.TxBody Api.Era
 initTx cardanoKeys HeadParameters{contestationPeriod, parties} txIn =
+  -- TODO(SN): refactor -> return Either TxBodyError TxBody
   either (error . show) id $ makeTransactionBody bodyContent
  where
   bodyContent =
@@ -480,49 +488,39 @@ abortTx (headInput, headDatum) initialInputs
 
 -- XXX(SN): We should log decisions why a tx is not an initTx etc. instead of
 -- only returning a Maybe, i.e. 'Either Reason (OnChainTx tx, OnChainHeadState)'
-observeInitTx :: Party -> ValidatedTx Era -> Maybe (OnChainTx CardanoTx, OnChainHeadState)
-observeInitTx party ValidatedTx{wits, body} = do
-  (dh, headDatum, MockHead.Initial cp ps) <- getFirst $ foldMap (First . decodeHeadDatum) datumsList
+observeInitTx :: Party -> Api.TxBody Api.Era -> Maybe (OnChainTx CardanoTx, OnChainHeadState)
+observeInitTx party txBody = do
+  (ix, headOut, MockHead.Initial cp ps) <- findFirst headOutput indexedOutputs
   let parties = map convertParty ps
   let cperiod = contestationPeriodToDiffTime cp
   guard $ party `elem` parties
-  (i, o) <- getFirst $ foldMap (First . findSmOutput dh) indexedOutputs
   pure
     ( OnInitTx cperiod parties
     , Initial
-        { threadOutput = (i, o, headDatum)
+        { threadOutput = convert (mkTxIn ix, headOut)
         , initials
         }
     )
  where
-  decodeHeadDatum (dh, d) =
-    (dh,d,) <$> fromData (getPlutusData d)
+  headOutput = \case
+    (ix, out@(Api.TxOut _ _ (TxOutDatum _ d))) ->
+      (ix,out,) <$> fromData (toPlutusData d)
+    _ -> Nothing
 
-  findSmOutput dh (ix, o@(TxOut _ _ dh')) =
-    guard (SJust dh == dh') $> (i, o)
-   where
-    i = TxIn (TxId $ SafeHash.hashAnnotated body) ix
+  indexedOutputs = zip [0 ..] txOuts
 
-  datumsList = Map.toList datums
+  Api.TxBody TxBodyContent{txOuts} = txBody
 
-  datums = unTxDats $ txdats wits
+  initialOutputs = filter (isInitial . snd) indexedOutputs
 
-  indexedOutputs =
-    zip [0 ..] (toList (outputs body))
+  initials = map (convert . first mkTxIn) initialOutputs
 
-  initials =
-    let initialOutputs = filter (isInitial . snd) indexedOutputs
-     in mapMaybe mkInitial initialOutputs
+  mkTxIn ix = Api.TxIn (getTxId txBody) (TxIx ix)
 
-  mkInitial (ix, txOut) =
-    (mkTxIn ix,txOut,) <$> lookupDatum wits txOut
+  isInitial (Api.TxOut addr _ _) =
+    addr == mkScriptAddress networkId initialScript
 
-  mkTxIn ix = TxIn (TxId $ SafeHash.hashAnnotated body) ix
-
-  isInitial (TxOut addr _ _) =
-    addr == scriptAddr initialScript
-
-  initialScript = plutusScript MockInitial.validatorScript
+  initialScript = Api.plutusScript MockInitial.validatorScript
 
 convertParty :: OnChain.Party -> Party
 convertParty = Party . partyToVerKey
@@ -651,7 +649,16 @@ ownInitial vkey =
     guard $ pkh == transKeyHash (hashKey @StandardCrypto $ VKey vkey)
     pure (i, pkh)
 
--- * Helpers
+-- TODO(SN): refactor -> remove
+convert :: (Api.TxIn, Api.TxOut CtxTx Api.Era) -> (TxIn StandardCrypto, TxOut Era, Data Era)
+convert (txIn, txOut) = case txOut of
+  (Api.TxOut _ _ (TxOutDatum _ d)) ->
+    (toShelleyTxIn txIn, toShelleyTxOut shelleyBasedEra $ toCtxUTxOTxOut txOut, toAlonzoData d)
+  _ -> error "convert: can't extract datum from txOut"
+
+--
+-- Helpers
+--
 
 mkUnsignedTx ::
   TxBody Era ->
@@ -737,3 +744,7 @@ utxoFromTx ValidatedTx{body} =
   Map.fromList $ zip (map mkTxIn [0 ..]) . toList $ outputs body
  where
   mkTxIn = TxIn (TxId $ SafeHash.hashAnnotated body)
+
+-- | Find first occurance including a transformation.
+findFirst :: Foldable t => (a -> Maybe b) -> t a -> Maybe b
+findFirst fn = getFirst . foldMap (First . fn)

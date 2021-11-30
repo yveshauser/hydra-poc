@@ -72,7 +72,9 @@ import Hydra.Ledger.Cardano (
   fromLedgerTxId,
   fromLedgerUtxo,
   fromShelleyTxIn,
+  getTxBody,
   makeSignedTransaction,
+  shelleyBasedEra,
   utxoPairs,
  )
 import qualified Hydra.Ledger.Cardano as Api
@@ -313,7 +315,7 @@ chainSyncClient tracer callback party headState =
     let utxo = knownUtxo onChainHeadState
     -- TODO(SN): We should be only looking for abort,commit etc. when we have a headId/policyId
     let res =
-          observeInitTx party tx
+          observeInitTx party (bodyFromTx tx)
             <|> ((,onChainHeadState) <$> observeCommitTx tx)
             <|> observeCollectComTx utxo tx
             <|> observeCloseTx utxo tx
@@ -441,6 +443,10 @@ toUnsignedTx :: Api.TxBody Api.Era -> ValidatedTx Era
 toUnsignedTx body = tx
  where
   ShelleyTx _era tx = makeSignedTransaction [] body
+
+-- TODO(SN): refactor -> remove this
+bodyFromTx :: ValidatedTx Era -> Api.TxBody Api.Era
+bodyFromTx = getTxBody . ShelleyTx shelleyBasedEra
 
 -- | This extract __Alonzo__ transactions from a block. If the block wasn't
 -- produced in the Alonzo era, it returns a empty sequence.

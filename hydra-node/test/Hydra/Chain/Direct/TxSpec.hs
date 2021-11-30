@@ -87,7 +87,7 @@ spec =
     describe "initTx" $ do
       prop "is observed" $ \txIn cperiod (party :| parties) cardanoKeys ->
         let params = HeadParameters cperiod (party : parties)
-            tx = toUnsignedTx $ initTx cardanoKeys params txIn
+            tx = initTx cardanoKeys params txIn
             observed = observeInitTx party tx
          in case observed of
               Just (octx, _) -> octx === OnInitTx @CardanoTx cperiod (party : parties)
@@ -97,7 +97,7 @@ spec =
       prop "is not observed if not invited" $ \txIn cperiod (NonEmpty parties) cardanoKeys ->
         forAll (elements parties) $ \notInvited ->
           let invited = nub parties \\ [notInvited]
-              tx = toUnsignedTx $ initTx cardanoKeys (HeadParameters cperiod invited) txIn
+              tx = initTx cardanoKeys (HeadParameters cperiod invited) txIn
            in isNothing (observeInitTx notInvited tx)
                 & counterexample ("observing as: " <> show notInvited)
                 & counterexample ("invited: " <> show invited)
@@ -106,7 +106,7 @@ spec =
         let params = HeadParameters cperiod parties
             parties = fst <$> me : others
             cardanoKeys = snd <$> me : others
-            tx = toUnsignedTx $ initTx cardanoKeys params txIn
+            tx = initTx cardanoKeys params txIn
             res = observeInitTx (fst me) tx
          in case res of
               Just (OnInitTx cp ps, Initial{initials}) ->
