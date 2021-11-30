@@ -459,6 +459,9 @@ toLedgerAddr = \case
 -- TxOut
 --
 
+mkTxOutDatum :: Plutus.ToData a => a -> TxOutDatum CtxTx Era
+mkTxOutDatum = TxOutDatum ScriptDataInAlonzoEra . fromPlutusData . Plutus.toData
+
 toMaryTxOut :: Ledger.TxOut LedgerEra -> Ledger.Mary.TxOut (Ledger.Mary.MaryEra Ledger.StandardCrypto)
 toMaryTxOut = \case
   Ledger.Alonzo.TxOutCompact addr value ->
