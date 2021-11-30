@@ -153,6 +153,7 @@ library
     , prometheus
     , QuickCheck
     , req
+    , serialise
     , shelley-spec-ledger
     , shelley-spec-ledger-test
     , small-steps
@@ -216,8 +217,8 @@ test-suite tests
     , aeson
     , array
     , base
-    , bytestring
     , base16-bytestring
+    , bytestring
     , cardano-api
     , cardano-binary
     , cardano-crypto-class

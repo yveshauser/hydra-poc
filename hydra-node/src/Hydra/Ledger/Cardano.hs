@@ -51,6 +51,7 @@ import qualified Cardano.Slotting.EpochInfo as Slotting
 import qualified Cardano.Slotting.Time as Slotting
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
+import Codec.Serialise (serialise)
 import Control.Arrow (left)
 import Control.Monad (foldM)
 import qualified Control.State.Transition as Ledger
@@ -66,6 +67,7 @@ import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
 import Formatting.Buildable (build)
 import Hydra.Ledger (IsTx (..), Ledger (..), ValidationError (..))
 import Hydra.Ledger.Cardano.Orphans ()
+import qualified Plutus.V1.Ledger.Api as Plutus
 import Test.Cardano.Ledger.Alonzo.AlonzoEraGen ()
 import qualified Test.Cardano.Ledger.Alonzo.AlonzoEraGen as Ledger.Alonzo
 import qualified Test.Cardano.Ledger.Shelley.Generator.Constants as Ledger.Generator
@@ -222,6 +224,30 @@ utxoMin :: Utxo -> Utxo
 utxoMin = Utxo . uncurry Map.singleton . Map.findMin . utxoMap
 
 --
+-- TxBody
+--
+
+-- | An empty 'TxBodyContent' with all empty/zero values to be extended using
+-- record updates.
+buildTxBody :: TxBodyContent BuildTx Era
+buildTxBody =
+  TxBodyContent
+    mempty
+    TxInsCollateralNone
+    mempty
+    (TxFeeExplicit TxFeesExplicitInAlonzoEra 0)
+    (TxValidityNoLowerBound, TxValidityNoUpperBound ValidityNoUpperBoundInAlonzoEra)
+    TxMetadataNone
+    TxAuxScriptsNone
+    TxExtraKeyWitnessesNone
+    (BuildTxWith Nothing)
+    TxWithdrawalsNone
+    TxCertificatesNone
+    TxUpdateProposalNone
+    TxMintNone
+    TxScriptValidityNone
+
+--
 -- Tx
 --
 
@@ -294,24 +320,12 @@ mkSimpleCardanoTx (txin, TxOut owner txOutValueIn datum) (recipient, valueOut) s
  where
   valueIn = txOutValueToValue txOutValueIn
 
-  -- TODO: We could define an 'empty' TxBodyContent and use record field
-  -- modifiers to simply set the fields of interest.
   txBodyContent =
-    TxBodyContent
-      (map (,BuildTxWith $ KeyWitness KeyWitnessForSpending) [txin])
-      TxInsCollateralNone
-      txOuts
-      (TxFeeExplicit TxFeesExplicitInAlonzoEra fee)
-      (TxValidityNoLowerBound, TxValidityNoUpperBound ValidityNoUpperBoundInAlonzoEra)
-      TxMetadataNone
-      TxAuxScriptsNone
-      TxExtraKeyWitnessesNone
-      (BuildTxWith Nothing)
-      TxWithdrawalsNone
-      TxCertificatesNone
-      TxUpdateProposalNone
-      TxMintNone
-      TxScriptValidityNone
+    buildTxBody
+      { txIns = map (,BuildTxWith $ KeyWitness KeyWitnessForSpending) [txin]
+      , txOuts
+      , txFee = TxFeeExplicit TxFeesExplicitInAlonzoEra fee
+      }
 
   txOuts =
     TxOut @CtxTx recipient (TxOutValue MultiAssetInAlonzoEra valueOut) TxOutDatumNone :
@@ -412,11 +426,27 @@ mkVkAddress ::
   VerificationKey PaymentKey ->
   AddressInEra era
 mkVkAddress networkId vk =
-  shelleyAddressInEra $
-    makeShelleyAddress
-      networkId
-      (PaymentCredentialByKey $ verificationKeyHash vk)
-      NoStakeAddress
+  makeShelleyAddressInEra
+    networkId
+    (PaymentCredentialByKey $ verificationKeyHash vk)
+    NoStakeAddress
+
+plutusScript :: Plutus.Script -> Script PlutusScriptV1
+plutusScript script =
+  PlutusScript PlutusScriptV1 (PlutusScriptSerialised serialized)
+ where
+  serialized = toShort . fromLazy $ serialise script
+
+mkScriptAddress ::
+  IsShelleyBasedEra era =>
+  NetworkId ->
+  Script lang ->
+  AddressInEra era
+mkScriptAddress networkId script =
+  makeShelleyAddressInEra
+    networkId
+    (PaymentCredentialByScript $ hashScript script)
+    NoStakeAddress
 
 toLedgerAddr :: AddressInEra Era -> Ledger.Addr Ledger.StandardCrypto
 toLedgerAddr = \case
