@@ -57,7 +57,29 @@ import qualified Hydra.Data.Party as OnChain
 import Hydra.Data.Utxo (fromByteString)
 import qualified Hydra.Data.Utxo as OnChain
 import Hydra.Ledger (balance)
-import Hydra.Ledger.Cardano (CardanoTx, IsShelleyBasedEra (shelleyBasedEra), Utxo, Utxo' (Utxo), toLedgerUtxo, toMaryValue, toShelleyTxIn, toShelleyTxOut, utxoPairs)
+import Hydra.Ledger.Cardano (
+  BuildTxWith (BuildTxWith),
+  CardanoTx,
+  IsShelleyBasedEra (shelleyBasedEra),
+  KeyWitnessInCtx (KeyWitnessForSpending),
+  Lovelace (Lovelace),
+  NetworkId,
+  NetworkMagic (NetworkMagic),
+  TxBodyContent (..),
+  Utxo,
+  Utxo' (Utxo),
+  Witness (KeyWitness),
+  buildTxBody,
+  lovelaceToTxOutValue,
+  makeTransactionBody,
+  mkScriptAddress,
+  mkTxOutDatum,
+  toLedgerUtxo,
+  toMaryValue,
+  toShelleyTxIn,
+  toShelleyTxOut,
+  utxoPairs,
+ )
 import qualified Hydra.Ledger.Cardano as Api
 import Hydra.Party (Party (Party), vkey)
 import Hydra.Snapshot (SnapshotNumber)
@@ -69,6 +91,10 @@ import Plutus.V1.Ledger.Value (assetClass, currencySymbol, tokenName)
 -- TODO(SN): parameterize
 network :: Network
 network = Testnet
+
+-- TODO(SN): parameterize
+networkId :: NetworkId
+networkId = Api.Testnet $ NetworkMagic 42
 
 -- * Post Hydra Head transactions
 
@@ -109,63 +135,42 @@ initTx ::
   -- | Participant's cardano public keys.
   [VerificationKey] ->
   HeadParameters ->
-  TxIn StandardCrypto ->
-  ValidatedTx Era
+  Api.TxIn ->
+  Api.TxBody Api.Era
 initTx cardanoKeys HeadParameters{contestationPeriod, parties} txIn =
-  mkUnsignedTx body dats (Redeemers mempty) mempty
+  either (error . show) id $ makeTransactionBody bodyContent
  where
-  body =
-    TxBody
-      { inputs = Set.singleton txIn
-      , collateral = mempty
-      , outputs = StrictSeq.fromList (headOut : initials)
-      , txcerts = mempty
-      , txwdrls = Wdrl mempty
-      , txfee = Coin 0
-      , txvldt = ValidityInterval SNothing SNothing
-      , txUpdates = SNothing
-      , reqSignerHashes = mempty
-      , mint = mempty
-      , scriptIntegrityHash = SNothing
-      , adHash = SNothing
-      , txnetworkid = SNothing
+  bodyContent =
+    buildTxBody
+      { txIns = [(txIn, BuildTxWith $ KeyWitness KeyWitnessForSpending)]
+      , txOuts = headOut : initials
       }
 
-  dats =
-    TxDats $
-      Map.fromList $
-        (headDatumHash, headDatum) :
-          [(initialDatumHash vkey, initialDatum vkey) | vkey <- cardanoKeys]
+  headOut = Api.TxOut headAddress headValue headDatum
 
-  headOut = TxOut headAddress headValue (SJust headDatumHash)
-
-  headAddress = scriptAddr $ plutusScript $ MockHead.validatorScript policyId
+  headAddress = mkScriptAddress networkId . Api.plutusScript $ MockHead.validatorScript policyId
 
   -- REVIEW(SN): how much to store here / minUtxoValue / depending on assets?
-  headValue = inject (Coin 2000000)
-
-  headDatumHash = hashData @Era headDatum
+  headValue = lovelaceToTxOutValue $ Lovelace 2000000
 
   headDatum =
-    Data . toData $
+    mkTxOutDatum $
       MockHead.Initial
         (contestationPeriodFromDiffTime contestationPeriod)
         (map (partyFromVerKey . vkey) parties)
 
   initials = map mkInitial cardanoKeys
 
-  mkInitial = TxOut @Era initialAddress initialValue . SJust . initialDatumHash
+  mkInitial = Api.TxOut initialAddress initialValue . mkInitialDatum
 
-  initialAddress = scriptAddr $ plutusScript MockInitial.validatorScript
+  initialAddress = mkScriptAddress networkId $ Api.plutusScript MockInitial.validatorScript
 
   -- TODO: should really be the minted PTs plus some ADA to make the ledger happy
   initialValue = headValue
 
-  initialDatumHash = hashData @Era . initialDatum
-
-  initialDatum vkey =
+  mkInitialDatum vkey =
     let pubKeyHash = transKeyHash $ hashKey @StandardCrypto $ VKey vkey
-     in Data . toData $ MockInitial.datum pubKeyHash
+     in mkTxOutDatum $ MockInitial.datum pubKeyHash
 
 -- | Craft a commit transaction which includes the "committed" utxo as a datum.
 -- TODO(SN): Eventually, this might not be necessary as the 'Utxo tx' would need

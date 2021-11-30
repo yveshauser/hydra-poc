@@ -60,8 +60,22 @@ import Hydra.Chain.Direct.Util (
   versions,
  )
 import qualified Hydra.Chain.Direct.Util as Cardano
-import Hydra.Chain.Direct.Wallet (ErrCoverFee (ErrUnknownInput, input), TinyWallet (..), TinyWalletLog, withTinyWallet)
-import Hydra.Ledger.Cardano (CardanoTx, fromLedgerTxId, fromLedgerUtxo, utxoPairs)
+import Hydra.Chain.Direct.Wallet (
+  ErrCoverFee (ErrUnknownInput, input),
+  TinyWallet (..),
+  TinyWalletLog,
+  withTinyWallet,
+ )
+import Hydra.Ledger.Cardano (
+  CardanoTx,
+  Tx (ShelleyTx),
+  fromLedgerTxId,
+  fromLedgerUtxo,
+  fromShelleyTxIn,
+  makeSignedTransaction,
+  utxoPairs,
+ )
+import qualified Hydra.Ledger.Cardano as Api
 import Hydra.Logging (Tracer, traceWith)
 import Hydra.Party (Party)
 import Hydra.Snapshot (Snapshot (..))
@@ -377,7 +391,7 @@ fromPostChainTx TinyWallet{getUtxo, verificationKey} headState cardanoKeys = \ca
     u <- getUtxo
     -- NOTE: 'lookupMax' to favor change outputs!
     case Map.lookupMax u of
-      Just (seedInput, _) -> pure . Just $ initTx cardanoKeys params seedInput
+      Just (seedInput, _) -> pure . Just . toUnsignedTx $ initTx cardanoKeys params (fromShelleyTxIn seedInput)
       Nothing -> error "cannot find a seed input to pass to Init transaction"
   AbortTx _utxo ->
     readTVar headState >>= \case
@@ -421,6 +435,12 @@ fromPostChainTx TinyWallet{getUtxo, verificationKey} headState cardanoKeys = \ca
 --
 -- Helpers
 --
+
+-- TODO(SN): refactor -> remove this
+toUnsignedTx :: Api.TxBody Api.Era -> ValidatedTx Era
+toUnsignedTx body = tx
+ where
+  ShelleyTx _era tx = makeSignedTransaction [] body
 
 -- | This extract __Alonzo__ transactions from a block. If the block wasn't
 -- produced in the Alonzo era, it returns a empty sequence.

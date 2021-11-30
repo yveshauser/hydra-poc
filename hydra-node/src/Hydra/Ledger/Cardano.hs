@@ -335,15 +335,6 @@ mkSimpleCardanoTx (txin, TxOut owner txOutValueIn datum) (recipient, valueOut) s
 
   fee = Lovelace 0
 
--- XXX(SN): replace with Cardano.Api.TxBody.lovelaceToTxOutValue when available
-lovelaceToTxOutValue :: Lovelace -> TxOutValue AlonzoEra
-lovelaceToTxOutValue lovelace = TxOutValue MultiAssetInAlonzoEra (lovelaceToValue lovelace)
-
-toTxDatum :: TxOutDatum CtxUTxO Era -> TxOutDatum CtxTx Era
-toTxDatum = \case
-  TxOutDatumNone -> TxOutDatumNone
-  TxOutDatumHash sdsie ha -> TxOutDatumHash sdsie ha
-
 -- | Convert an existing @cardano-api@'s 'Tx' to a @cardano-ledger-specs@ 'Tx'
 toLedgerTx :: CardanoTx -> Ledger.Tx LedgerEra
 toLedgerTx = \case
@@ -461,6 +452,15 @@ toLedgerAddr = \case
 
 mkTxOutDatum :: Plutus.ToData a => a -> TxOutDatum CtxTx Era
 mkTxOutDatum = TxOutDatum ScriptDataInAlonzoEra . fromPlutusData . Plutus.toData
+
+-- XXX(SN): replace with Cardano.Api.TxBody.lovelaceToTxOutValue when available
+lovelaceToTxOutValue :: Lovelace -> TxOutValue AlonzoEra
+lovelaceToTxOutValue lovelace = TxOutValue MultiAssetInAlonzoEra (lovelaceToValue lovelace)
+
+toTxDatum :: TxOutDatum CtxUTxO Era -> TxOutDatum CtxTx Era
+toTxDatum = \case
+  TxOutDatumNone -> TxOutDatumNone
+  TxOutDatumHash sdsie ha -> TxOutDatumHash sdsie ha
 
 toMaryTxOut :: Ledger.TxOut LedgerEra -> Ledger.Mary.TxOut (Ledger.Mary.MaryEra Ledger.StandardCrypto)
 toMaryTxOut = \case

@@ -37,6 +37,7 @@ import Data.Maybe (fromJust)
 import Data.Sequence.Strict (StrictSeq ((:<|)))
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
 import Hydra.Chain (HeadParameters (..), OnChainTx (..))
+import Hydra.Chain.Direct (toUnsignedTx)
 import Hydra.Chain.Direct.Fixture (maxTxSize, pparams)
 import Hydra.Chain.Direct.Util (Era)
 import Hydra.Chain.Direct.Wallet (ErrCoverFee (..), coverFee_)
@@ -86,7 +87,7 @@ spec =
     describe "initTx" $ do
       prop "is observed" $ \txIn cperiod (party :| parties) cardanoKeys ->
         let params = HeadParameters cperiod (party : parties)
-            tx = initTx cardanoKeys params txIn
+            tx = toUnsignedTx $ initTx cardanoKeys params txIn
             observed = observeInitTx party tx
          in case observed of
               Just (octx, _) -> octx === OnInitTx @CardanoTx cperiod (party : parties)
@@ -96,7 +97,7 @@ spec =
       prop "is not observed if not invited" $ \txIn cperiod (NonEmpty parties) cardanoKeys ->
         forAll (elements parties) $ \notInvited ->
           let invited = nub parties \\ [notInvited]
-              tx = initTx cardanoKeys (HeadParameters cperiod invited) txIn
+              tx = toUnsignedTx $ initTx cardanoKeys (HeadParameters cperiod invited) txIn
            in isNothing (observeInitTx notInvited tx)
                 & counterexample ("observing as: " <> show notInvited)
                 & counterexample ("invited: " <> show invited)
@@ -105,7 +106,7 @@ spec =
         let params = HeadParameters cperiod parties
             parties = fst <$> me : others
             cardanoKeys = snd <$> me : others
-            tx = initTx cardanoKeys params txIn
+            tx = toUnsignedTx $ initTx cardanoKeys params txIn
             res = observeInitTx (fst me) tx
          in case res of
               Just (OnInitTx cp ps, Initial{initials}) ->
@@ -297,7 +298,8 @@ spec =
 
       prop "cover fee correctly handles redeemers" $
         withMaxSuccess 60 $ \txIn walletUtxo params cardanoKeys ->
-          let ValidatedTx{body = initTxBody, wits = initTxWits} = initTx cardanoKeys params txIn
+          -- TODO(SN): refactor to deconstruct using cardano-api types
+          let ValidatedTx{body = initTxBody, wits = initTxWits} = toUnsignedTx $ initTx cardanoKeys params txIn
               -- Find head & initial utxos from initTx (using some partial functions & matches)
               initTxId = TxId $ SafeHash.hashAnnotated initTxBody
               headInput = TxIn initTxId 0
