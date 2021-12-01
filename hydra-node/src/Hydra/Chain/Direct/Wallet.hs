@@ -195,11 +195,7 @@ withTinyWallet tracer magic (vk, sk) iocp addr action = do
       , getAddress =
           address
       , sign = \body ->
-          let wit =
-                getTxId body
-                  `signWith` ( Cardano.Api.PaymentVerificationKey (Ledger.VKey vk)
-                             , Cardano.Api.PaymentSigningKey sk
-                             )
+          let wit = body `signWith` Cardano.Api.PaymentSigningKey sk
            in makeSignedTransaction [wit] body
       , coverFee = \lookupUtxo partialTx -> do
           (walletUtxo, pparams) <- readTMVar utxoVar

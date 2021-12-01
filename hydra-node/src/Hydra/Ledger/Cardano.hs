@@ -137,14 +137,17 @@ cardanoLedger =
 signWith ::
   forall era.
   (IsShelleyBasedEra era) =>
-  TxId ->
-  (VerificationKey PaymentKey, SigningKey PaymentKey) ->
+  TxBody era ->
+  SigningKey PaymentKey ->
   KeyWitness era
-signWith (TxId h) (PaymentVerificationKey vk, PaymentSigningKey sk) =
+signWith body signingKey@(PaymentSigningKey sk) =
   ShelleyKeyWitness (shelleyBasedEra @era) $
     Ledger.Shelley.WitVKey
       (Ledger.asWitness vk)
       (Ledger.signedDSIGN @Ledger.StandardCrypto sk h)
+ where
+  TxId h = getTxId body
+  PaymentVerificationKey vk = getVerificationKey signingKey
 
 --
 -- Type conversions & plumbing
