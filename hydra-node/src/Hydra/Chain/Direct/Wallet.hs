@@ -76,11 +76,14 @@ import Hydra.Ledger.Cardano (
   NetworkId (Testnet),
   fromLedgerTxId,
   genKeyPair,
+  getTxId,
+  makeSignedTransaction,
   mkVkAddress,
   signWith,
   toLedgerAddr,
   toLedgerKeyWitness,
  )
+import qualified Hydra.Ledger.Cardano as Api
 import Hydra.Logging (Tracer, traceWith)
 import Hydra.Prelude
 import Ouroboros.Consensus.Cardano.Block (BlockQuery (..), CardanoEras, pattern BlockAlonzo)
@@ -146,7 +149,7 @@ type AlonzoPoint = Point (ShelleyBlock Era)
 data TinyWallet m = TinyWallet
   { getUtxo :: STM m (Map TxIn TxOut)
   , getAddress :: Address
-  , sign :: ValidatedTx Era -> ValidatedTx Era
+  , sign :: Api.TxBody Api.Era -> Api.Tx Api.Era
   , coverFee :: Map TxIn TxOut -> ValidatedTx Era -> STM m (Either ErrCoverFee (ValidatedTx Era))
   , verificationKey :: VerificationKey
   }
@@ -191,19 +194,13 @@ withTinyWallet tracer magic (vk, sk) iocp addr action = do
           fst <$> readTMVar utxoVar
       , getAddress =
           address
-      , sign = \validatedTx@ValidatedTx{body, wits} ->
-          let txid = Ledger.TxId (SafeHash.hashAnnotated body)
-              wit =
-                fromLedgerTxId txid
+      , sign = \body ->
+          let wit =
+                getTxId body
                   `signWith` ( Cardano.Api.PaymentVerificationKey (Ledger.VKey vk)
                              , Cardano.Api.PaymentSigningKey sk
                              )
-           in validatedTx
-                { wits =
-                    wits
-                      { txwitsVKey = toLedgerKeyWitness @Cardano.Api.AlonzoEra [wit]
-                      }
-                }
+           in makeSignedTransaction [wit] body
       , coverFee = \lookupUtxo partialTx -> do
           (walletUtxo, pparams) <- readTMVar utxoVar
           case coverFee_ pparams lookupUtxo walletUtxo partialTx of

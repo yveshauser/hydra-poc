@@ -75,6 +75,7 @@ import Hydra.Ledger.Cardano (
   getTxBody,
   makeSignedTransaction,
   shelleyBasedEra,
+  toLedgerTx,
   utxoPairs,
  )
 import qualified Hydra.Ledger.Cardano as Api
@@ -379,7 +380,7 @@ finalizeTx TinyWallet{sign, getUtxo, coverFee} headState partialTx = do
             <> show walletUtxo
         )
     Right validatedTx -> do
-      pure $ sign validatedTx
+      pure $ toLedgerTx $ sign $ bodyFromTx validatedTx
 
 fromPostChainTx ::
   (MonadSTM m, MonadThrow (STM m)) =>
