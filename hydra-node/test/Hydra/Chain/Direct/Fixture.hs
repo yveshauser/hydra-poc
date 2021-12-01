@@ -1,5 +1,4 @@
 {-# LANGUAGE TypeApplications #-}
-{-# OPTIONS_GHC -Wno-incomplete-uni-patterns #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | Unit tests for our "hand-rolled" transactions as they are used in the
@@ -18,6 +17,7 @@ import qualified Data.Map as Map
 import Data.Maybe (fromJust)
 import Data.Ratio ((%))
 import Hydra.Chain.Direct.Util (Era)
+import Hydra.Ledger.Cardano (ProtocolParameters, ShelleyBasedEra (ShelleyBasedEraAlonzo), fromLedgerPParams)
 import Plutus.V1.Ledger.Api (PubKeyHash (PubKeyHash), toBuiltin)
 import Test.Cardano.Ledger.Alonzo.PlutusScripts (defaultCostModel)
 import Test.Cardano.Ledger.Alonzo.Serialisation.Generators ()
@@ -25,6 +25,9 @@ import Test.QuickCheck.Instances ()
 
 maxTxSize :: Int64
 maxTxSize = 1 `shift` 14
+
+protocolParams :: ProtocolParameters
+protocolParams = fromLedgerPParams ShelleyBasedEraAlonzo pparams
 
 pparams :: PParams Era
 pparams =

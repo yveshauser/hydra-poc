@@ -49,13 +49,21 @@ import Hydra.Ledger (balance)
 import Hydra.Ledger.Cardano (
   CardanoTx,
   LedgerCrypto,
+  Lovelace (Lovelace),
   Utxo,
   Utxo' (Utxo),
   describeCardanoTx,
   fromLedgerTx,
   genAdaOnlyUtxo,
+  lovelaceToValue,
+  makeSignedTransaction,
+  modifyValue,
+  shelleyBasedEra,
   shrinkUtxo,
+  toLedgerTx,
   toMaryValue,
+  toShelleyTxIn,
+  toShelleyTxOut,
  )
 import Hydra.Party (vkey)
 import Ledger.Value (currencyMPSHash, unAssetClass)
@@ -85,6 +93,38 @@ spec :: Spec
 spec =
   parallel $ do
     describe "initTx" $ do
+      prop "transaction size is below limit" $ \txIn cperiod (party :| parties) cardanoKeys ->
+        let params = HeadParameters cperiod (party : parties)
+            tx = toUnsignedTx $ initTx cardanoKeys params txIn
+            cbor = serialize tx
+            len = LBS.length cbor
+         in len < maxTxSize
+              & label (show (len `div` 1024) <> "kB")
+              & counterexample ("Tx: " <> show tx)
+              & counterexample ("Tx serialized size: " <> show len)
+
+      prop "transaction fee is reasonable" $
+        \(seedIn, seedOut) (walletIn, walletOut) cperiod (party :| parties) cardanoKeys ->
+          let params = HeadParameters cperiod (party : parties)
+              tx = makeSignedTransaction [] $ initTx cardanoKeys params seedIn
+              lookupUtxo = Map.singleton (toShelleyTxIn seedIn) seedOut
+              -- Prepare a wallet utxo which contains 100Ada
+              walletUtxo =
+                Map.singleton
+                  (toShelleyTxIn walletIn)
+                  (toShelleyTxOut shelleyBasedEra $ modifyValue (const $ lovelaceToValue $ Lovelace 100_000_000) walletOut)
+           in case coverFee_ pparams lookupUtxo walletUtxo (toLedgerTx tx) of
+                Left err ->
+                  False
+                    & counterexample ("Wallet error: " <> show err)
+                    & counterexample ("Wallet utxo: " <> show walletUtxo)
+                Right (_, ValidatedTx{body}) ->
+                  let fee = txfee body
+                   in fee < Coin 3_000_000
+                        & label (show fee)
+                        & counterexample ("Tx: " <> show tx)
+                        & counterexample ("Fee: " <> show fee)
+
       prop "is observed" $ \txIn cperiod (party :| parties) cardanoKeys ->
         let params = HeadParameters cperiod (party : parties)
             tx = initTx cardanoKeys params txIn

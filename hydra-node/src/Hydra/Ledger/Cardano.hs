@@ -16,8 +16,7 @@ module Hydra.Ledger.Cardano (
 
 import Hydra.Prelude hiding (id)
 
-import Cardano.Api hiding (UTxO)
-import qualified Cardano.Api
+import Cardano.Api
 import Cardano.Api.Byron
 import Cardano.Api.Shelley
 import Cardano.Binary (decodeAnnotator, serialize, serialize')
@@ -464,6 +463,10 @@ toTxDatum :: TxOutDatum CtxUTxO Era -> TxOutDatum CtxTx Era
 toTxDatum = \case
   TxOutDatumNone -> TxOutDatumNone
   TxOutDatumHash sdsie ha -> TxOutDatumHash sdsie ha
+
+modifyValue :: (Value -> Value) -> TxOut ctx Era -> TxOut ctx Era
+modifyValue f (TxOut addr value datum) =
+  TxOut addr (TxOutValue MultiAssetInAlonzoEra . f $ txOutValueToValue value) datum
 
 toMaryTxOut :: Ledger.TxOut LedgerEra -> Ledger.Mary.TxOut (Ledger.Mary.MaryEra Ledger.StandardCrypto)
 toMaryTxOut = \case
