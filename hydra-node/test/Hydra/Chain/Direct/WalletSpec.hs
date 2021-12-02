@@ -29,6 +29,8 @@ import Data.Maybe (fromJust)
 import Data.Ratio ((%))
 import qualified Data.Sequence.Strict as StrictSeq
 import qualified Data.Set as Set
+import Hydra.Chain.Direct (toUnsignedTx)
+import Hydra.Chain.Direct.Fixture (pparams)
 import Hydra.Chain.Direct.MockServer (withMockServer)
 import Hydra.Chain.Direct.Util (Era, VerificationKey)
 import Hydra.Chain.Direct.Wallet (
@@ -41,7 +43,7 @@ import Hydra.Chain.Direct.Wallet (
   watchUtxoUntil,
   withTinyWallet,
  )
-import Hydra.Ledger.Cardano (NetworkId (Testnet), NetworkMagic, TxBodyContent (..), Utxo, Utxo' (Utxo), fromShelleyTxIn, genOneUtxo, getTxFee, getValue, lookupTxIn, lovelaceToValue, makeTransactionBody, mkVkAddress, negateValue, toLedgerAddr, toLedgerUtxo)
+import Hydra.Ledger.Cardano (NetworkId (Testnet), NetworkMagic, TxBodyContent (..), Utxo, Utxo' (Utxo), fromShelleyTxIn, genOneUtxo, genTxBodyContent, getTxFee, getValue, lookupTxIn, lovelaceToValue, makeTransactionBody, mkVkAddress, negateValue, toLedgerAddr, toLedgerUtxo)
 import qualified Hydra.Ledger.Cardano as Api
 import Ouroboros.Consensus.Cardano.Block (HardForkBlock (..))
 import Ouroboros.Consensus.Shelley.Ledger (mkShelleyBlock)
@@ -154,22 +156,22 @@ prop_seenInputsAreConsumed =
 prop_balanceTransaction ::
   Property
 prop_balanceTransaction =
-  forAllBlind (reasonablySized genValidatedTx) $ \tx ->
+  forAllBlind (reasonablySized genTxBodyContent) $ \txDraft -> do
+    -- TODO(SN): refactor generators in here
+    let tx = toUnsignedTx $ either (error . show) id $ makeTransactionBody txDraft
     forAllBlind (reasonablySized $ genOutputsForInputs tx) $ \lookupUtxo ->
       forAllBlind (reasonablySized genOneUtxo) $ \walletUtxo ->
-        let arbitraryBodyContents = error "WIP"
-         in prop' lookupUtxo walletUtxo arbitraryBodyContents
+        prop' lookupUtxo walletUtxo txDraft
  where
   prop' lookupUtxo walletUtxo txDraft =
     case coverFee_ pparams lookupUtxo (unUTxO $ toLedgerUtxo walletUtxo) txDraft of
       Left{} ->
         property True & label "Left"
-      Right (_, tx') ->
-        let inp' = knownInputBalance (lookupUtxo <> walletUtxo) tx'
-            out' = outputBalance tx'
-            Right tx = makeTransactionBody txDraft
-            out = outputBalance tx
-            fee = getTxFee tx'
+      Right (_, Api.TxBody txBalanced) ->
+        let inp' = knownInputBalance (lookupUtxo <> walletUtxo) txBalanced
+            out' = outputBalance txBalanced
+            out = outputBalance txDraft
+            fee = getTxFee txBalanced
             delta = out' <> negateValue inp'
          in conjoin
               [ delta == lovelaceToValue fee
@@ -332,17 +334,16 @@ ourOutputs utxo blk =
 -- TODO(SN): candidates to move into our Cardano module
 
 -- | NOTE: This does not account for withdrawals
-knownInputBalance :: Utxo -> Api.TxBody Api.Era -> Api.Value
-knownInputBalance utxo (Api.TxBody TxBodyContent{txIns}) =
+knownInputBalance :: Utxo -> Api.TxBodyContent ctx Api.Era -> Api.Value
+knownInputBalance utxo TxBodyContent{txIns} =
   foldMap (resolve . fst) txIns
  where
   resolve :: Api.TxIn -> Api.Value
   resolve k = maybe mempty getValue (lookupTxIn k utxo)
 
 -- | NOTE: This does not account for deposits
-outputBalance :: Api.TxBody Api.Era -> Api.Value
-outputBalance (Api.TxBody TxBodyContent{txOuts}) =
-  foldMap getValue txOuts
+outputBalance :: Api.TxBodyContent ctx Api.Era -> Api.Value
+outputBalance TxBodyContent{txOuts} = foldMap getValue txOuts
 
 pparams :: PParams Era
 pparams =

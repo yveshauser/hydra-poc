@@ -4,6 +4,8 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE UndecidableInstances #-}
+-- NOTE(SN): required for 'getTxFee'
+{-# OPTIONS_GHC -Wno-incomplete-uni-patterns #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Hydra.Ledger.Cardano (
@@ -266,8 +268,13 @@ plutusV1Witness script datum redeemer =
       redeemer
       (ExecutionUnits 0 0)
 
-getTxFee :: TxBody Era -> Lovelace
-getTxFee (TxBody TxBodyContent{txFee}) = fee
+-- | View the body content of a body. XXX(SN): This exists here because
+-- cardano-api does not expose getTxBodyContent
+getTxBodyContent :: TxBody Era -> TxBodyContent ViewTx Era
+getTxBodyContent (TxBody content) = content
+
+getTxFee :: TxBodyContent ctx Era -> Lovelace
+getTxFee TxBodyContent{txFee} = fee
  where
   -- TODO(SN): how to prove the compiler that there is no `TxFeesImplicitInEra` for non-byron?
   TxFeeExplicit TxFeesExplicitInAlonzoEra fee = txFee
@@ -597,6 +604,10 @@ genKeyPair = do
   sk <- fromJust . CC.rawDeserialiseSignKeyDSIGN . fromList <$> vectorOf 64 arbitrary
   let vk = CC.deriveVerKeyDSIGN sk
   pure (PaymentVerificationKey (Ledger.VKey vk), PaymentSigningKey sk)
+
+genTxBodyContent :: Gen (TxBodyContent BuildTx Era)
+genTxBodyContent =
+  error "WIP" -- TODO(SN): WIP
 
 -- TODO: Generate non-genesis transactions for better coverage.
 -- TODO: Enable Alonzo-specific features. We started off in the Mary era, and

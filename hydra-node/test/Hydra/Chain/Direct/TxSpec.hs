@@ -50,6 +50,7 @@ import Hydra.Ledger.Cardano (
   LedgerCrypto,
   Lovelace (Lovelace),
   ScriptDataSupportedInEra (ScriptDataInAlonzoEra),
+  TxBody (TxBody),
   TxOutDatum (TxOutDatum),
   Utxo,
   Utxo' (Utxo),
@@ -125,11 +126,11 @@ spec =
                   False
                     & counterexample ("Wallet error: " <> show err)
                     & counterexample ("Wallet utxo: " <> show walletUtxo)
-                Right (_, txBody) ->
-                  let fee = getTxFee txBody
+                Right (_, TxBody content) ->
+                  let fee = getTxFee content
                    in fee < Lovelace 3_000_000
                         & label (show fee)
-                        & counterexample ("Tx: " <> show txBody)
+                        & counterexample ("Tx: " <> show content)
                         & counterexample ("Fee: " <> show fee)
 
       prop "is observed" $ \txIn cperiod (party :| parties) cardanoKeys ->

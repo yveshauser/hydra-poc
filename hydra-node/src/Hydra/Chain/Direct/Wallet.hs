@@ -252,7 +252,8 @@ coverFee_ ::
   Map TxIn TxOut ->
   TxBodyContent BuildTx Api.Era ->
   Either ErrCoverFee (Map TxIn TxOut, Api.TxBody Api.Era)
-coverFee_ _pparams _lookupUtxo _walletUtxo _txContent = error "WIP"
+coverFee_ _pparams _lookupUtxo _walletUtxo _txContent =
+  error "WIP" -- TODO(SN): WIP
 
 --  (input, output) <- case Map.lookupMax (Map.filter hasEnoughValue walletUtxo) of
 --    Nothing ->
