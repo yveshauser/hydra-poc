@@ -16,6 +16,7 @@ module Hydra.Ledger.Cardano (
 
 import Hydra.Prelude hiding (id)
 
+-- TODO(SN): hide & not re-export UTxO as we have another, blessed Utxo type in scope
 import Cardano.Api
 import Cardano.Api.Byron
 import Cardano.Api.Shelley
@@ -249,6 +250,19 @@ buildTxBody =
     TxMintNone
     TxScriptValidityNone
 
+plutusV1Witness :: PlutusScript PlutusScriptV1 -> ScriptData -> ScriptData -> Witness WitCtxTxIn Era
+plutusV1Witness script datum redeemer =
+  ScriptWitness ScriptWitnessForSpending witness
+ where
+  witness =
+    PlutusScriptWitness
+      PlutusScriptV1InAlonzo
+      PlutusScriptV1
+      script
+      (ScriptDatumForTxIn datum)
+      redeemer
+      (ExecutionUnits 0 0)
+
 --
 -- Tx
 --
@@ -424,21 +438,21 @@ mkVkAddress networkId vk =
     (PaymentCredentialByKey $ verificationKeyHash vk)
     NoStakeAddress
 
-plutusScript :: Plutus.Script -> Script PlutusScriptV1
+plutusScript :: Plutus.Script -> PlutusScript PlutusScriptV1
 plutusScript script =
-  PlutusScript PlutusScriptV1 (PlutusScriptSerialised serialized)
+  PlutusScriptSerialised serialized
  where
   serialized = toShort . fromLazy $ serialise script
 
 mkScriptAddress ::
   IsShelleyBasedEra era =>
   NetworkId ->
-  Script lang ->
+  PlutusScript PlutusScriptV1 ->
   AddressInEra era
 mkScriptAddress networkId script =
   makeShelleyAddressInEra
     networkId
-    (PaymentCredentialByScript $ hashScript script)
+    (PaymentCredentialByScript $ hashScript $ PlutusScript PlutusScriptV1 script)
     NoStakeAddress
 
 toLedgerAddr :: AddressInEra Era -> Ledger.Addr Ledger.StandardCrypto

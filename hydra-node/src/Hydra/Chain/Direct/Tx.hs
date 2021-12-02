@@ -58,6 +58,7 @@ import Hydra.Data.Utxo (fromByteString)
 import qualified Hydra.Data.Utxo as OnChain
 import Hydra.Ledger (balance)
 import Hydra.Ledger.Cardano (
+  BuildTx,
   BuildTxWith (BuildTxWith),
   CardanoTx,
   CtxTx,
@@ -66,6 +67,7 @@ import Hydra.Ledger.Cardano (
   Lovelace (Lovelace),
   NetworkId,
   NetworkMagic (NetworkMagic),
+  ScriptData,
   TxBodyContent (..),
   TxIx (TxIx),
   TxOutDatum (TxOutDatum),
@@ -73,9 +75,9 @@ import Hydra.Ledger.Cardano (
   Utxo' (Utxo),
   Witness (KeyWitness),
   buildTxBody,
+  fromPlutusData,
   getTxId,
   lovelaceToTxOutValue,
-  makeTransactionBody,
   mkScriptAddress,
   mkTxOutDatum,
   toAlonzoData,
@@ -143,20 +145,18 @@ initTx ::
   [VerificationKey] ->
   HeadParameters ->
   Api.TxIn ->
-  Api.TxBody Api.Era
+  Api.TxBodyContent BuildTx Api.Era
 initTx cardanoKeys HeadParameters{contestationPeriod, parties} txIn =
-  -- TODO(SN): refactor -> return Either TxBodyError TxBody
-  either (error . show) id $ makeTransactionBody bodyContent
+  buildTxBody
+    { txIns = [(txIn, BuildTxWith $ KeyWitness KeyWitnessForSpending)]
+    , txOuts = headOut : initials
+    }
  where
-  bodyContent =
-    buildTxBody
-      { txIns = [(txIn, BuildTxWith $ KeyWitness KeyWitnessForSpending)]
-      , txOuts = headOut : initials
-      }
-
   headOut = Api.TxOut headAddress headValue headDatum
 
-  headAddress = mkScriptAddress networkId . Api.plutusScript $ MockHead.validatorScript policyId
+  headAddress = mkScriptAddress networkId headScript
+
+  headScript = Api.plutusScript $ MockHead.validatorScript policyId
 
   -- REVIEW(SN): how much to store here / minUtxoValue / depending on assets?
   headValue = lovelaceToTxOutValue $ Lovelace 2000000
@@ -171,7 +171,9 @@ initTx cardanoKeys HeadParameters{contestationPeriod, parties} txIn =
 
   mkInitial = Api.TxOut initialAddress initialValue . mkInitialDatum
 
-  initialAddress = mkScriptAddress networkId $ Api.plutusScript MockInitial.validatorScript
+  initialAddress = mkScriptAddress networkId initialScript
+
+  initialScript = Api.plutusScript MockInitial.validatorScript
 
   -- TODO: should really be the minted PTs plus some ADA to make the ledger happy
   initialValue = headValue
@@ -415,74 +417,42 @@ data AbortTxError = OverlappingInputs
 -- | Create transaction which aborts a head by spending the Head output and all
 -- other "initial" outputs.
 abortTx ::
-  -- | Everything needed to spend the Head state-machine output.
-  (TxIn StandardCrypto, Data Era) ->
+  -- | Data needed to spend the Head state-machine output.
+  (Api.TxIn, ScriptData) ->
   -- | Data needed to spend the inital output sent to each party to the Head
   -- which should contain the PT and is locked by initial script.
-  Map (TxIn StandardCrypto) (Data Era) ->
-  Either AbortTxError (ValidatedTx Era)
-abortTx (headInput, headDatum) initialInputs
-  | isJust (lookup headInput initialInputs) =
+  Map Api.TxIn ScriptData ->
+  Either AbortTxError (TxBodyContent BuildTx Api.Era)
+abortTx (headIn, headDatum) initialIns
+  | isJust (lookup headIn initialIns) =
     Left OverlappingInputs
   | otherwise =
-    Right $ mkUnsignedTx body datums redeemers scripts
+    Right
+      buildTxBody
+        { txIns = headInput : initialInputs
+        , txOuts = [headOutput]
+        }
  where
-  body =
-    TxBody
-      { inputs = Set.singleton headInput <> Map.keysSet initialInputs
-      , collateral = mempty
-      , outputs =
-          StrictSeq.fromList
-            [ TxOut
-                (scriptAddr headScript)
-                (inject $ Coin 2000000) -- TODO: This really needs to be passed as argument
-                (SJust $ hashData @Era abortDatum)
-            ]
-      , txcerts = mempty
-      , txwdrls = Wdrl mempty
-      , txfee = Coin 0
-      , txvldt = ValidityInterval SNothing SNothing
-      , txUpdates = SNothing
-      , reqSignerHashes = mempty
-      , mint = mempty
-      , scriptIntegrityHash = SNothing
-      , adHash = SNothing
-      , txnetworkid = SNothing
-      }
+  headInput = (headIn, BuildTxWith $ Api.plutusV1Witness headScript headDatum headRedeemer)
 
-  scripts =
-    fromList $
-      map withScriptHash $
-        headScript : [initialScript | not (null initialInputs)]
+  initialInputs =
+    map (\(i, d) -> (i, BuildTxWith $ Api.plutusV1Witness initialScript d initialRedeemer)) $
+      Map.toList initialIns
 
-  initialScript = plutusScript MockInitial.validatorScript
+  headOutput = Api.TxOut headAddress headValue $ Api.mkTxOutDatum MockHead.Final
 
-  headScript = plutusScript $ MockHead.validatorScript policyId
+  headAddress = mkScriptAddress networkId headScript
 
-  redeemers =
-    redeemersFromList $
-      (rdptr body (Spending headInput), (headRedeemer, ExUnits 0 0)) : initialRedeemers
+  headScript = Api.plutusScript $ MockHead.validatorScript policyId
 
-  headRedeemer = Data $ toData MockHead.Abort
+  -- TODO: This really needs to be passed as argument
+  headValue = lovelaceToTxOutValue $ Lovelace 2000000
 
-  initialRedeemers =
-    map
-      ( \txin ->
-          ( rdptr body (Spending txin)
-          , (Data $ toData $ Plutus.getRedeemer $ MockInitial.redeemer (), ExUnits 0 0)
-          )
-      )
-      $ Map.keys initialInputs
+  headRedeemer = fromPlutusData $ toData MockHead.Abort
 
-  -- NOTE: Those datums contain the datum of the spent state-machine input, but
-  -- also, the datum of the created output which is necessary for the
-  -- state-machine on-chain validator to control the correctness of the
-  -- transition.
-  datums =
-    datumsFromList $ abortDatum : headDatum : Map.elems initialInputs
+  initialScript = Api.plutusScript MockInitial.validatorScript
 
-  abortDatum =
-    Data $ toData MockHead.Final
+  initialRedeemer = fromPlutusData $ toData $ MockInitial.redeemer ()
 
 -- * Observe Hydra Head transactions
 
@@ -517,8 +487,9 @@ observeInitTx party txBody = do
 
   mkTxIn ix = Api.TxIn (getTxId txBody) (TxIx ix)
 
-  isInitial (Api.TxOut addr _ _) =
-    addr == mkScriptAddress networkId initialScript
+  isInitial (Api.TxOut addr _ _) = addr == initialAddress
+
+  initialAddress = mkScriptAddress networkId initialScript
 
   initialScript = Api.plutusScript MockInitial.validatorScript
 
