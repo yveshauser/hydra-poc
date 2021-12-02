@@ -598,16 +598,16 @@ observeAbortTx utxo tx = do
 -- | Provide a UTXO map for given OnChainHeadState. Used by the TinyWallet and
 -- the direct chain component to lookup inputs for balancing / constructing txs.
 -- XXX(SN): This is a hint that we might want to track the Utxo directly?
-knownUtxo :: OnChainHeadState -> Map (TxIn StandardCrypto) (TxOut Era)
+knownUtxo :: OnChainHeadState -> Utxo
 knownUtxo = \case
   Initial{threadOutput, initials} ->
-    Map.fromList . map onlyUtxo $ (threadOutput : initials)
-  OpenOrClosed{threadOutput = (i, o, _)} ->
-    Map.singleton i o
+    Utxo . Map.fromList . map convertUtxo $ (threadOutput : initials)
+  OpenOrClosed{threadOutput} ->
+    Utxo $ uncurry Map.singleton $ convertUtxo threadOutput
   _ ->
     mempty
  where
-  onlyUtxo (i, o, _) = (i, o)
+  convertUtxo (i, o, _) = (fromShelleyTxIn i, fromShelleyTxOut shelleyBasedEra o)
 
 -- | Look for the "initial" which corresponds to given cardano verification key.
 ownInitial :: VerificationKey -> [(TxIn StandardCrypto, TxOut Era, Data Era)] -> Maybe (TxIn StandardCrypto, PubKeyHash)

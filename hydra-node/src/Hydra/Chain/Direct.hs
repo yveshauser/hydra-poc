@@ -17,7 +17,7 @@ import Hydra.Prelude
 
 import Cardano.Ledger.Alonzo.Tx (ValidatedTx)
 import Cardano.Ledger.Alonzo.TxSeq (txSeqTxns)
-import Cardano.Ledger.Shelley.API (TxIn (TxIn))
+import Cardano.Ledger.Shelley.API (TxIn (TxIn), unUTxO)
 import qualified Cardano.Ledger.Shelley.API as Ledger
 import Control.Exception (IOException)
 import Control.Monad (foldM)
@@ -37,10 +37,6 @@ import Hydra.Chain (
 import Hydra.Chain.Direct.Tx (
   OnChainHeadState (..),
   abortTx,
-  closeTx,
-  collectComTx,
-  commitTx,
-  fanoutTx,
   initTx,
   knownUtxo,
   observeAbortTx,
@@ -49,7 +45,6 @@ import Hydra.Chain.Direct.Tx (
   observeCommitTx,
   observeFanoutTx,
   observeInitTx,
-  ownInitial,
  )
 import Hydra.Chain.Direct.Util (
   Block,
@@ -67,8 +62,11 @@ import Hydra.Chain.Direct.Wallet (
   withTinyWallet,
  )
 import Hydra.Ledger.Cardano (
+  BuildTx,
   CardanoTx,
   Tx (ShelleyTx),
+  TxBodyContent,
+  fromAlonzoData,
   fromLedgerTxId,
   fromLedgerUtxo,
   fromShelleyTxIn,
@@ -76,12 +74,11 @@ import Hydra.Ledger.Cardano (
   makeSignedTransaction,
   shelleyBasedEra,
   toLedgerTx,
-  utxoPairs,
+  toLedgerUtxo,
  )
 import qualified Hydra.Ledger.Cardano as Api
 import Hydra.Logging (Tracer, traceWith)
 import Hydra.Party (Party)
-import Hydra.Snapshot (Snapshot (..))
 import Ouroboros.Consensus.Cardano.Block (GenTx (..), HardForkBlock (BlockAlonzo))
 import Ouroboros.Consensus.Ledger.SupportsMempool (ApplyTxErr)
 import Ouroboros.Consensus.Network.NodeToClient (Codecs' (..))
@@ -163,7 +160,7 @@ withDirectChain tracer networkMagic iocp socketPath keyPair party cardanoKeys ca
                         Nothing ->
                           pure Nothing
                         Just partialTx ->
-                          Just <$> finalizeTx wallet headState partialTx
+                          Just . toLedgerTx <$> finalizeTx wallet headState partialTx
 
                     maybe
                       (callback PostTxFailed)
@@ -313,7 +310,7 @@ chainSyncClient tracer callback party headState =
   runOnChainTx :: [OnChainTx CardanoTx] -> ValidatedTx Era -> STM m [OnChainTx CardanoTx]
   runOnChainTx observed tx = do
     onChainHeadState <- readTVar headState
-    let utxo = knownUtxo onChainHeadState
+    let utxo = unUTxO . toLedgerUtxo $ knownUtxo onChainHeadState
     -- TODO(SN): We should be only looking for abort,commit etc. when we have a headId/policyId
     let res =
           observeInitTx party (bodyFromTx tx)
@@ -353,18 +350,18 @@ finalizeTx ::
   (MonadSTM m, MonadThrow (STM m)) =>
   TinyWallet m ->
   TVar m OnChainHeadState ->
-  ValidatedTx Era ->
-  STM m (ValidatedTx Era)
-finalizeTx TinyWallet{sign, getUtxo, coverFee} headState partialTx = do
+  TxBodyContent BuildTx Api.Era ->
+  STM m (Api.Tx Api.Era)
+finalizeTx TinyWallet{sign, getUtxo, coverFee} headState txContents = do
   headUtxo <- knownUtxo <$> readTVar headState
   walletUtxo <- fromLedgerUtxo . Ledger.UTxO <$> getUtxo
-  coverFee headUtxo partialTx >>= \case
+  coverFee headUtxo txContents >>= \case
     Left ErrUnknownInput{input = TxIn txId txIx} -> do
       throwSTM
         ( CannotSpendInput
             { input = (fromLedgerTxId txId, txIx)
             , walletUtxo
-            , headUtxo = fromLedgerUtxo $ Ledger.UTxO headUtxo
+            , headUtxo
             } ::
             InvalidTxError CardanoTx
         )
@@ -373,28 +370,27 @@ finalizeTx TinyWallet{sign, getUtxo, coverFee} headState partialTx = do
         ( "failed to cover fee for transaction: "
             <> show e
             <> ", "
-            <> show partialTx
+            <> show txContents
             <> ", using head utxo: "
             <> show headUtxo
             <> ", and wallet utxo: "
             <> show walletUtxo
         )
-    Right validatedTx -> do
-      pure $ toLedgerTx $ sign $ bodyFromTx validatedTx
+    Right txBody -> pure $ sign txBody
 
 fromPostChainTx ::
-  (MonadSTM m, MonadThrow (STM m)) =>
+  MonadSTM m =>
   TinyWallet m ->
   TVar m OnChainHeadState ->
   [Cardano.VerificationKey] ->
   PostChainTx CardanoTx ->
-  STM m (Maybe (ValidatedTx Era))
-fromPostChainTx TinyWallet{getUtxo, verificationKey} headState cardanoKeys = \case
+  STM m (Maybe (TxBodyContent BuildTx Api.Era))
+fromPostChainTx TinyWallet{getUtxo} headState cardanoKeys = \case
   InitTx params -> do
     u <- getUtxo
     -- NOTE: 'lookupMax' to favor change outputs!
     case Map.lookupMax u of
-      Just (seedInput, _) -> pure . Just . toUnsignedTx $ initTx cardanoKeys params (fromShelleyTxIn seedInput)
+      Just (seedInput, _) -> pure . Just $ initTx cardanoKeys params (fromShelleyTxIn seedInput)
       Nothing -> error "cannot find a seed input to pass to Init transaction"
   AbortTx _utxo ->
     readTVar headState >>= \case
@@ -403,37 +399,37 @@ fromPostChainTx TinyWallet{getUtxo, verificationKey} headState cardanoKeys = \ca
           Left err -> error $ show err
           Right tx -> pure $ Just tx
       _st -> pure Nothing
-  CommitTx party utxo ->
-    readTVar headState >>= \case
-      Initial{initials} -> case ownInitial verificationKey initials of
-        Nothing -> error $ "no ownInitial: " <> show initials
-        Just initial ->
-          case utxoPairs utxo of
-            [aUtxo] -> do
-              pure . Just $ commitTx party (Just aUtxo) initial
-            [] -> do
-              pure . Just $ commitTx party Nothing initial
-            _ ->
-              throwIO (MoreThanOneUtxoCommitted @CardanoTx)
-      st -> error $ "cannot post CommitTx, invalid state: " <> show st
-  CollectComTx utxo ->
-    readTVar headState >>= \case
-      Initial{threadOutput} ->
-        pure . Just $ collectComTx utxo (convertTuple threadOutput)
-      st -> error $ "cannot post CollectComTx, invalid state: " <> show st
-  CloseTx Snapshot{number, utxo} ->
-    readTVar headState >>= \case
-      OpenOrClosed{threadOutput} ->
-        pure . Just $ closeTx number utxo (convertTuple threadOutput)
-      st -> error $ "cannot post CloseTx, invalid state: " <> show st
-  FanoutTx{utxo} ->
-    readTVar headState >>= \case
-      OpenOrClosed{threadOutput} ->
-        pure . Just $ fanoutTx utxo (convertTuple threadOutput)
-      st -> error $ "cannot post FanOutTx, invalid state: " <> show st
+  -- CommitTx party utxo ->
+  --   readTVar headState >>= \case
+  --     Initial{initials} -> case ownInitial verificationKey initials of
+  --       Nothing -> error $ "no ownInitial: " <> show initials
+  --       Just initial ->
+  --         case utxoPairs utxo of
+  --           [aUtxo] -> do
+  --             pure . Just $ commitTx party (Just aUtxo) initial
+  --           [] -> do
+  --             pure . Just $ commitTx party Nothing initial
+  --           _ ->
+  --             throwIO (MoreThanOneUtxoCommitted @CardanoTx)
+  --     st -> error $ "cannot post CommitTx, invalid state: " <> show st
+  -- CollectComTx utxo ->
+  --   readTVar headState >>= \case
+  --     Initial{threadOutput} ->
+  --       pure . Just $ collectComTx utxo (convertTuple threadOutput)
+  --     st -> error $ "cannot post CollectComTx, invalid state: " <> show st
+  -- CloseTx Snapshot{number, utxo} ->
+  --   readTVar headState >>= \case
+  --     OpenOrClosed{threadOutput} ->
+  --       pure . Just $ closeTx number utxo (convertTuple threadOutput)
+  --     st -> error $ "cannot post CloseTx, invalid state: " <> show st
+  -- FanoutTx{utxo} ->
+  --   readTVar headState >>= \case
+  --     OpenOrClosed{threadOutput} ->
+  --       pure . Just $ fanoutTx utxo (convertTuple threadOutput)
+  --     st -> error $ "cannot post FanOutTx, invalid state: " <> show st
   _ -> error "not implemented"
  where
-  convertTuple (i, _, dat) = (i, dat)
+  convertTuple (i, _, dat) = (fromShelleyTxIn i, fromAlonzoData dat)
 
 --
 -- Helpers
