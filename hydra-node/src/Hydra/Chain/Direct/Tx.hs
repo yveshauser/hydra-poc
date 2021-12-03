@@ -76,6 +76,8 @@ import Hydra.Ledger.Cardano (
   Witness (KeyWitness),
   buildTxBody,
   fromPlutusData,
+  fromShelleyTxIn,
+  fromShelleyTxOut,
   getTxId,
   lovelaceToTxOutValue,
   mkScriptAddress,

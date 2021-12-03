@@ -4,7 +4,6 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# OPTIONS_GHC -Wno-missing-methods #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Hydra.Ledger.Cardano (
@@ -226,6 +225,10 @@ utxoFromTx (Tx body@(ShelleyTxBody _ ledgerBody _ _ _ _) _) =
 utxoMin :: Utxo -> Utxo
 utxoMin = Utxo . uncurry Map.singleton . Map.findMin . utxoMap
 
+-- TODO(SN): not happy with the name, but lookupUtxo is used a lot already
+lookupTxIn :: TxIn -> Utxo -> Maybe (TxOut CtxUTxO Era)
+lookupTxIn i (Utxo m) = Map.lookup i m
+
 --
 -- TxBody
 --
@@ -262,6 +265,12 @@ plutusV1Witness script datum redeemer =
       (ScriptDatumForTxIn datum)
       redeemer
       (ExecutionUnits 0 0)
+
+getTxFee :: TxBody Era -> Lovelace
+getTxFee (TxBody TxBodyContent{txFee}) = fee
+ where
+  -- TODO(SN): how to prove the compiler that there is no `TxFeesImplicitInEra` for non-byron?
+  TxFeeExplicit TxFeesExplicitInAlonzoEra fee = txFee
 
 --
 -- Tx
@@ -478,6 +487,10 @@ toTxDatum = \case
   TxOutDatumNone -> TxOutDatumNone
   TxOutDatumHash sdsie ha -> TxOutDatumHash sdsie ha
 
+-- | Get the value stored in a 'TxOut'.
+getValue :: TxOut ctx Era -> Value
+getValue (TxOut _ value _) = txOutValueToValue value
+
 modifyValue :: (Value -> Value) -> TxOut ctx Era -> TxOut ctx Era
 modifyValue f (TxOut addr value datum) =
   TxOut addr (TxOutValue MultiAssetInAlonzoEra . f $ txOutValueToValue value) datum
@@ -661,6 +674,9 @@ genUtxo = do
     Ledger.TxIn Ledger.StandardCrypto ->
     Ledger.TxIn Ledger.StandardCrypto
   setTxId baseId (Ledger.TxIn _ti wo) = Ledger.TxIn baseId wo
+
+genOneUtxo :: Gen Utxo
+genOneUtxo = Utxo . Map.fromList <$> vectorOf 1 arbitrary
 
 -- | Generate utxos owned by the given cardano key.
 genUtxoFor :: VerificationKey PaymentKey -> Gen Utxo

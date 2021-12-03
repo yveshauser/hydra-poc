@@ -16,12 +16,11 @@ import Cardano.Ledger.Alonzo.TxSeq (TxSeq (..))
 import Cardano.Ledger.BaseTypes (boundRational)
 import Cardano.Ledger.Block (bbody)
 import Cardano.Ledger.Coin (Coin (..))
-import Cardano.Ledger.Core (Value)
 import Cardano.Ledger.Keys (VKey (..))
 import qualified Cardano.Ledger.SafeHash as SafeHash
-import Cardano.Ledger.Shelley.API (BHeader)
+import Cardano.Ledger.Shelley.API (BHeader, UTxO (unUTxO))
 import qualified Cardano.Ledger.Shelley.API as Ledger
-import Cardano.Ledger.Val (Val (..), invert)
+import Cardano.Ledger.Val (Val (..))
 import Control.Monad.Class.MonadTimer (timeout)
 import Control.Tracer (nullTracer)
 import Data.Default (def)
@@ -42,7 +41,8 @@ import Hydra.Chain.Direct.Wallet (
   watchUtxoUntil,
   withTinyWallet,
  )
-import Hydra.Ledger.Cardano (NetworkId (Testnet), NetworkMagic, mkVkAddress, toLedgerAddr)
+import Hydra.Ledger.Cardano (NetworkId (Testnet), NetworkMagic, TxBodyContent (..), Utxo, Utxo' (Utxo), fromShelleyTxIn, genOneUtxo, getTxFee, getValue, lookupTxIn, lovelaceToValue, makeTransactionBody, mkVkAddress, negateValue, toLedgerAddr, toLedgerUtxo)
+import qualified Hydra.Ledger.Cardano as Api
 import Ouroboros.Consensus.Cardano.Block (HardForkBlock (..))
 import Ouroboros.Consensus.Shelley.Ledger (mkShelleyBlock)
 import Test.Cardano.Ledger.Alonzo.PlutusScripts (defaultCostModel)
@@ -101,7 +101,7 @@ spec = parallel $ do
 prop_wellSuitedGenerators ::
   Property
 prop_wellSuitedGenerators =
-  forAll genUtxo $ \utxo ->
+  forAll genUtxo $ \utxo -> do
     forAllBlind (genBlock utxo) $ \blk ->
       property (smallTxSets blk)
         & cover 0.3 (noneIsOurs utxo blk) "has no tx that are ours"
@@ -156,27 +156,30 @@ prop_balanceTransaction ::
 prop_balanceTransaction =
   forAllBlind (reasonablySized genValidatedTx) $ \tx ->
     forAllBlind (reasonablySized $ genOutputsForInputs tx) $ \lookupUtxo ->
-      forAllBlind (reasonablySized genUtxo) $ \walletUtxo ->
-        prop' lookupUtxo walletUtxo tx
+      forAllBlind (reasonablySized genOneUtxo) $ \walletUtxo ->
+        let arbitraryBodyContents = error "WIP"
+         in prop' lookupUtxo walletUtxo arbitraryBodyContents
  where
-  prop' lookupUtxo walletUtxo tx =
-    case coverFee_ pparams lookupUtxo walletUtxo tx of
+  prop' lookupUtxo walletUtxo txDraft =
+    case coverFee_ pparams lookupUtxo (unUTxO $ toLedgerUtxo walletUtxo) txDraft of
       Left{} ->
         property True & label "Left"
       Right (_, tx') ->
         let inp' = knownInputBalance (lookupUtxo <> walletUtxo) tx'
             out' = outputBalance tx'
+            Right tx = makeTransactionBody txDraft
             out = outputBalance tx
-            fee = (txfee . body) tx'
+            fee = getTxFee tx'
+            delta = out' <> negateValue inp'
          in conjoin
-              [ coin (deltaValue out' inp') == fee
+              [ delta == lovelaceToValue fee
               ]
               & label "Right"
               & counterexample ("Fee:             " <> show fee)
-              & counterexample ("Delta value:     " <> show (coin $ deltaValue out' inp'))
-              & counterexample ("Added value:     " <> show (coin inp'))
-              & counterexample ("Outputs after:   " <> show (coin out'))
-              & counterexample ("Outputs before:  " <> show (coin out))
+              & counterexample ("Delta value:     " <> show delta)
+              & counterexample ("Added value:     " <> show inp')
+              & counterexample ("Outputs after:   " <> show out')
+              & counterexample ("Outputs before:  " <> show out)
 
 prop_removeUsedInputs ::
   Property
@@ -184,10 +187,12 @@ prop_removeUsedInputs =
   forAllBlind (reasonablySized genValidatedTx) $ \tx ->
     forAllBlind (reasonablySized $ genOutputsForInputs tx) $ \txUtxo ->
       forAllBlind (reasonablySized genUtxo) $ \extraUtxo ->
-        prop' txUtxo (txUtxo <> extraUtxo) tx
+        let arbitraryBodyContents = error "WIP"
+         in -- HACK(SN): complete these conversions one way or the other
+            prop' txUtxo (unUTxO (toLedgerUtxo txUtxo) <> extraUtxo) arbitraryBodyContents
  where
-  prop' txUtxo walletUtxo tx =
-    case coverFee_ pparams mempty walletUtxo tx of
+  prop' txUtxo walletUtxo txDraft =
+    case coverFee_ pparams mempty walletUtxo txDraft of
       Left e ->
         property True & label (show e)
       Right (utxo', _) ->
@@ -258,11 +263,11 @@ genUtxo = do
     let value' = value <> inject (Coin 20_000_000)
      in TxOut addr value' datum
 
-genOutputsForInputs :: ValidatedTx Era -> Gen (Map TxIn TxOut)
+genOutputsForInputs :: ValidatedTx Era -> Gen Utxo
 genOutputsForInputs ValidatedTx{body} = do
   let n = Set.size (inputs body)
   outs <- vectorOf n arbitrary
-  pure $ Map.fromList $ zip (toList (inputs body)) outs
+  pure $ Utxo . Map.fromList $ zip (map fromShelleyTxIn $ toList (inputs body)) outs
 
 genValidatedTx :: Gen (ValidatedTx Era)
 genValidatedTx = do
@@ -324,25 +329,20 @@ ourOutputs utxo blk =
   let ours = Map.elems utxo
    in filter (`elem` ours) (allTxOuts blk)
 
-getValue :: TxOut -> Value Era
-getValue (TxOut _ value _) = value
-
-deltaValue :: Value Era -> Value Era -> Value Era
-deltaValue a b
-  | coin a > coin b = a <> invert b
-  | otherwise = invert a <> b
+-- TODO(SN): candidates to move into our Cardano module
 
 -- | NOTE: This does not account for withdrawals
-knownInputBalance :: Map TxIn TxOut -> ValidatedTx Era -> Value Era
-knownInputBalance utxo = foldMap resolve . toList . inputs . body
+knownInputBalance :: Utxo -> Api.TxBody Api.Era -> Api.Value
+knownInputBalance utxo (Api.TxBody TxBodyContent{txIns}) =
+  foldMap (resolve . fst) txIns
  where
-  resolve :: TxIn -> Value Era
-  resolve k = maybe zero getValue (Map.lookup k utxo)
+  resolve :: Api.TxIn -> Api.Value
+  resolve k = maybe mempty getValue (lookupTxIn k utxo)
 
 -- | NOTE: This does not account for deposits
-outputBalance :: ValidatedTx Era -> Value Era
-outputBalance =
-  foldMap getValue . outputs . body
+outputBalance :: Api.TxBody Api.Era -> Api.Value
+outputBalance (Api.TxBody TxBodyContent{txOuts}) =
+  foldMap getValue txOuts
 
 pparams :: PParams Era
 pparams =

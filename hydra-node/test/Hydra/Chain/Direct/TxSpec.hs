@@ -50,10 +50,6 @@ import Hydra.Ledger.Cardano (
   LedgerCrypto,
   Lovelace (Lovelace),
   ScriptDataSupportedInEra (ScriptDataInAlonzoEra),
-  TxBody (TxBody),
-  TxBodyContent (..),
-  TxFee (TxFeeExplicit),
-  TxFeesExplicitInEra (TxFeesExplicitInAlonzoEra),
   TxOutDatum (TxOutDatum),
   Utxo,
   Utxo' (Utxo),
@@ -61,6 +57,7 @@ import Hydra.Ledger.Cardano (
   fromLedgerTx,
   fromPlutusData,
   genAdaOnlyUtxo,
+  getTxFee,
   lovelaceToTxOutValue,
   lovelaceToValue,
   makeTransactionBody,
@@ -70,7 +67,6 @@ import Hydra.Ledger.Cardano (
   shelleyBasedEra,
   shrinkUtxo,
   toCtxUTxOTxOut,
-  toLedgerTx,
   toLedgerUtxo,
   toMaryValue,
   toShelleyTxIn,
@@ -129,12 +125,12 @@ spec =
                   False
                     & counterexample ("Wallet error: " <> show err)
                     & counterexample ("Wallet utxo: " <> show walletUtxo)
-                Right (_, tx@(TxBody TxBodyContent{txFee})) ->
-                  let TxFeeExplicit TxFeesExplicitInAlonzoEra fee = txFee
+                Right (_, txBody) ->
+                  let fee = getTxFee txBody
                    in fee < Lovelace 3_000_000
-                        & label (show txFee)
-                        & counterexample ("Tx: " <> show tx)
-                        & counterexample ("Fee: " <> show txFee)
+                        & label (show fee)
+                        & counterexample ("Tx: " <> show txBody)
+                        & counterexample ("Fee: " <> show fee)
 
       prop "is observed" $ \txIn cperiod (party :| parties) cardanoKeys ->
         let params = HeadParameters cperiod (party : parties)

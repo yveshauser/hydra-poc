@@ -73,7 +73,10 @@ import Hydra.Chain.Direct.Util (
   versions,
  )
 import Hydra.Ledger.Cardano (
+  BuildTx,
   NetworkId (Testnet),
+  TxBodyContent,
+  Utxo,
   fromLedgerTxId,
   genKeyPair,
   getTxId,
@@ -150,7 +153,7 @@ data TinyWallet m = TinyWallet
   { getUtxo :: STM m (Map TxIn TxOut)
   , getAddress :: Address
   , sign :: Api.TxBody Api.Era -> Api.Tx Api.Era
-  , coverFee :: Map TxIn TxOut -> ValidatedTx Era -> STM m (Either ErrCoverFee (ValidatedTx Era))
+  , coverFee :: Utxo -> TxBodyContent BuildTx Api.Era -> STM m (Either ErrCoverFee (Api.TxBody Api.Era))
   , verificationKey :: VerificationKey
   }
 
@@ -245,108 +248,109 @@ data ChangeError = ChangeError {inputBalance :: Coin, outputBalance :: Coin}
 -- TODO: The fee calculation is currently very dumb and static.
 coverFee_ ::
   PParams Era ->
+  Utxo ->
   Map TxIn TxOut ->
-  Map TxIn TxOut ->
-  ValidatedTx Era ->
-  Either ErrCoverFee (Map TxIn TxOut, ValidatedTx Era)
-coverFee_ pparams lookupUtxo walletUtxo partialTx@ValidatedTx{body, wits} = do
-  (input, output) <- case Map.lookupMax (Map.filter hasEnoughValue walletUtxo) of
-    Nothing ->
-      -- TODO(SN): this is misleading as we "just" don't have a Utxo which 'hasEnoughValue'
-      Left ErrNoAvailableUtxo
-    Just (i, o) ->
-      Right (i, o)
+  TxBodyContent BuildTx Api.Era ->
+  Either ErrCoverFee (Map TxIn TxOut, Api.TxBody Api.Era)
+coverFee_ _pparams _lookupUtxo _walletUtxo _txContent = error "WIP"
 
-  let inputs' = inputs body <> Set.singleton input
-  resolvedInputs <- traverse resolveInput (toList inputs')
+--  (input, output) <- case Map.lookupMax (Map.filter hasEnoughValue walletUtxo) of
+--    Nothing ->
+--      -- TODO(SN): this is misleading as we "just" don't have a Utxo which 'hasEnoughValue'
+--      Left ErrNoAvailableUtxo
+--    Just (i, o) ->
+--      Right (i, o)
 
-  let adjustedRedeemers = adjustRedeemers (inputs body) inputs' (txrdmrs wits)
-      needlesslyHighFee = calculateNeedlesslyHighFee adjustedRedeemers
+--  let inputs' = inputs body <> Set.singleton input
+--  resolvedInputs <- traverse resolveInput (toList inputs')
 
-  change <- first ErrNotEnoughFunds $ mkChange output resolvedInputs (toList $ outputs body) needlesslyHighFee
+--  let adjustedRedeemers = adjustRedeemers (inputs body) inputs' (txrdmrs wits)
+--      needlesslyHighFee = calculateNeedlesslyHighFee adjustedRedeemers
 
-  let outputs' = outputs body <> StrictSeq.singleton change
-      langs =
-        [ l
-        | (_hash, script) <- Map.toList (txscripts wits)
-        , (not . isNativeScript @Era) script
-        , Just l <- [language script]
-        ]
-      finalBody =
-        body
-          { inputs = inputs'
-          , outputs = outputs'
-          , collateral = Set.singleton input
-          , txfee = needlesslyHighFee
-          , scriptIntegrityHash =
-              hashScriptIntegrity
-                pparams
-                (Set.fromList langs)
-                adjustedRedeemers
-                (txdats wits)
-          }
-  pure
-    ( Map.withoutKeys walletUtxo inputs'
-    , partialTx
-        { body = finalBody
-        , wits = wits{txrdmrs = adjustedRedeemers}
-        }
-    )
- where
-  -- FIXME: 10 ADAs is arbitrary, just a way to increase the likelihood to cover fees
-  hasEnoughValue :: TxOut -> Bool
-  hasEnoughValue = (> Coin 10_000_000) . getAdaValue
+--  change <- first ErrNotEnoughFunds $ mkChange output resolvedInputs (toList $ outputs body) needlesslyHighFee
 
-  -- TODO: Do a better fee estimation based on the transaction's content.
-  calculateNeedlesslyHighFee (Redeemers redeemers) =
-    let executionCost = txscriptfee (_prices pparams) $ foldMap snd redeemers
-     in Coin 2_000_000 <> executionCost
+--  let outputs' = outputs body <> StrictSeq.singleton change
+--      langs =
+--        [ l
+--        | (_hash, script) <- Map.toList (txscripts wits)
+--        , (not . isNativeScript @Era) script
+--        , Just l <- [language script]
+--        ]
+--      finalBody =
+--        body
+--          { inputs = inputs'
+--          , outputs = outputs'
+--          , collateral = Set.singleton input
+--          , txfee = needlesslyHighFee
+--          , scriptIntegrityHash =
+--              hashScriptIntegrity
+--                pparams
+--                (Set.fromList langs)
+--                adjustedRedeemers
+--                (txdats wits)
+--          }
+--  pure
+--    ( Map.withoutKeys walletUtxo inputs'
+--    , partialTx
+--        { body = finalBody
+--        , wits = wits{txrdmrs = adjustedRedeemers}
+--        }
+--    )
+-- where
+--  -- FIXME: 10 ADAs is arbitrary, just a way to increase the likelihood to cover fees
+--  hasEnoughValue :: TxOut -> Bool
+--  hasEnoughValue = (> Coin 10_000_000) . getAdaValue
 
-  getAdaValue :: TxOut -> Coin
-  getAdaValue (TxOut _ value _) =
-    coin value
+--  -- TODO: Do a better fee estimation based on the transaction's content.
+--  calculateNeedlesslyHighFee (Redeemers redeemers) =
+--    let executionCost = txscriptfee (_prices pparams) $ foldMap snd redeemers
+--     in Coin 2_000_000 <> executionCost
 
-  resolveInput :: TxIn -> Either ErrCoverFee TxOut
-  resolveInput i = do
-    case Map.lookup i (lookupUtxo <> walletUtxo) of
-      Nothing -> Left $ ErrUnknownInput i
-      Just o -> Right o
+--  getAdaValue :: TxOut -> Coin
+--  getAdaValue (TxOut _ value _) =
+--    coin value
 
-  mkChange ::
-    TxOut ->
-    [TxOut] ->
-    [TxOut] ->
-    Coin ->
-    Either ChangeError TxOut
-  mkChange (TxOut addr _ datum) resolvedInputs otherOutputs fee
-    -- FIXME: The delta between in and out must be greater than the min utxo value!
-    | totalIn <= totalOut =
-      Left $ ChangeError totalIn totalOut
-    | otherwise =
-      Right $ TxOut addr (inject changeOut) datum
-   where
-    totalOut = foldMap getAdaValue otherOutputs <> fee
-    totalIn = foldMap getAdaValue resolvedInputs
-    changeOut = totalIn <> invert totalOut
+--  resolveInput :: TxIn -> Either ErrCoverFee TxOut
+--  resolveInput i = do
+--    case Map.lookup i (lookupUtxo <> walletUtxo) of
+--      Nothing -> Left $ ErrUnknownInput i
+--      Just o -> Right o
 
-  adjustRedeemers :: Set TxIn -> Set TxIn -> Redeemers Era -> Redeemers Era
-  adjustRedeemers initialInputs finalInputs (Redeemers initialRedeemers) =
-    Redeemers $ Map.fromList $ map adjustOne $ Map.toList initialRedeemers
-   where
-    sortedInputs = sort $ toList initialInputs
-    sortedFinalInputs = sort $ toList finalInputs
-    differences = List.findIndices (not . uncurry (==)) $ zip sortedInputs sortedFinalInputs
-    adjustOne (ptr@(RdmrPtr t idx), (d, _exUnits))
-      | fromIntegral idx `elem` differences =
-        (RdmrPtr t (idx + 1), (d, maxExecutionUnits))
-      | otherwise =
-        (ptr, (d, maxExecutionUnits))
+--  mkChange ::
+--    TxOut ->
+--    [TxOut] ->
+--    [TxOut] ->
+--    Coin ->
+--    Either ChangeError TxOut
+--  mkChange (TxOut addr _ datum) resolvedInputs otherOutputs fee
+--    -- FIXME: The delta between in and out must be greater than the min utxo value!
+--    | totalIn <= totalOut =
+--      Left $ ChangeError totalIn totalOut
+--    | otherwise =
+--      Right $ TxOut addr (inject changeOut) datum
+--   where
+--    totalOut = foldMap getAdaValue otherOutputs <> fee
+--    totalIn = foldMap getAdaValue resolvedInputs
+--    changeOut = totalIn <> invert totalOut
 
-    maxExecutionUnits :: ExUnits
-    maxExecutionUnits =
-      let ExUnits mem steps = _maxTxExUnits pparams
-          nRedeemers = fromIntegral (Map.size initialRedeemers)
-       in ExUnits (mem `div` nRedeemers) (steps `div` nRedeemers)
+--  adjustRedeemers :: Set TxIn -> Set TxIn -> Redeemers Era -> Redeemers Era
+--  adjustRedeemers initialInputs finalInputs (Redeemers initialRedeemers) =
+--    Redeemers $ Map.fromList $ map adjustOne $ Map.toList initialRedeemers
+--   where
+--    sortedInputs = sort $ toList initialInputs
+--    sortedFinalInputs = sort $ toList finalInputs
+--    differences = List.findIndices (not . uncurry (==)) $ zip sortedInputs sortedFinalInputs
+--    adjustOne (ptr@(RdmrPtr t idx), (d, _exUnits))
+--      | fromIntegral idx `elem` differences =
+--        (RdmrPtr t (idx + 1), (d, maxExecutionUnits))
+--      | otherwise =
+--        (ptr, (d, maxExecutionUnits))
+
+--    maxExecutionUnits :: ExUnits
+--    maxExecutionUnits =
+--      let ExUnits mem steps = _maxTxExUnits pparams
+--          nRedeemers = fromIntegral (Map.size initialRedeemers)
+--       in ExUnits (mem `div` nRedeemers) (steps `div` nRedeemers)
 
 -- | The idea for this wallet client is rather simple:
 --
