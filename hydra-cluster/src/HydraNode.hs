@@ -45,6 +45,7 @@ import qualified Data.ByteString as BS
 import qualified Data.List as List
 import qualified Data.Text as T
 import Hydra.Logging (Tracer, traceWith)
+import Hydra.Network (Host (..))
 import Network.HTTP.Conduit (HttpExceptionContent (ConnectionFailure), parseRequest)
 import Network.HTTP.Simple (HttpException (HttpExceptionRequest), Response, getResponseBody, getResponseStatusCode, httpBS)
 import Network.WebSockets (Connection, receiveData, runClient, sendClose, sendTextData)
@@ -61,9 +62,11 @@ import System.Process (
  )
 import System.Timeout (timeout)
 import Test.Hydra.Prelude (checkProcessHasNotDied, failAfter, failure, withFile')
+import Test.Network.Ports (randomUnusedTCPPort)
 
 data HydraClient = HydraClient
   { hydraNodeId :: Int
+  , apiHost :: Host
   , connection :: Connection
   , tracer :: Tracer IO EndToEndLog
   }
@@ -172,7 +175,8 @@ queryNode nodeId =
     e -> throwIO e
 
 data EndToEndLog
-  = NodeStarted Int
+  = NodeStarting Text
+  | NodeStarted Int
   | StartWaiting [Int] [Aeson.Value]
   | ReceivedMessage Int Aeson.Value
   | EndWaiting Int
@@ -220,6 +224,8 @@ withHydraCluster tracer workDir nodeSocket allKeys action = do
      where
       allNodeIds = [1 .. n]
 
+-- | Start a hydra node with given config and provide a connected 'HydraClient'
+-- to communicate with it.
 withHydraNode ::
   forall alg.
   DSIGNAlgorithm alg =>
@@ -242,18 +248,31 @@ withHydraNode tracer cardanoSKeyPath cardanoVKeysPaths workDir nodeSocket hydraN
       hydraVKeysPaths <- forM (zip [1 ..] hydraVKeys) $ \(i :: Int, vKey) -> do
         let filepath = dir </> (show i <> ".vk")
         filepath <$ BS.writeFile filepath (rawSerialiseVerKeyDSIGN vKey)
-      let p =
-            (hydraNodeProcess $ defaultArguments hydraNodeId cardanoSKeyPath cardanoVKeysPaths hydraSKeyPath hydraVKeysPaths nodeSocket allNodeIds)
-              { std_out = UseHandle out
-              }
+      apiHost <- randomAPIHost
+      let args =
+            defaultArguments
+              hydraNodeId
+              cardanoSKeyPath
+              cardanoVKeysPaths
+              hydraSKeyPath
+              hydraVKeysPaths
+              nodeSocket
+              allNodeIds
+              apiHost
+          p = (hydraNodeProcess args){std_out = UseHandle out}
+      traceWith tracer $ NodeStarting (unwords $ map toText args)
       withCreateProcess p $
         \_stdin _stdout _stderr processHandle -> do
           race_
             (checkProcessHasNotDied ("hydra-node (" <> show hydraNodeId <> ")") processHandle)
-            (withConnectionToNode tracer hydraNodeId action)
+            (withConnectionToNode tracer hydraNodeId apiHost action)
+ where
+  randomAPIHost = do
+    apiPort <- fromIntegral <$> randomUnusedTCPPort
+    pure $ Host{hostname = "0.0.0.0", port = apiPort}
 
-withConnectionToNode :: Tracer IO EndToEndLog -> Int -> (HydraClient -> IO a) -> IO a
-withConnectionToNode tracer hydraNodeId action = do
+withConnectionToNode :: Tracer IO EndToEndLog -> Int -> Host -> (HydraClient -> IO a) -> IO a
+withConnectionToNode tracer hydraNodeId apiHost@Host{hostname, port} action = do
   connectedOnce <- newIORef False
   tryConnect connectedOnce
  where
@@ -263,17 +282,18 @@ withConnectionToNode tracer hydraNodeId action = do
         False -> tryConnect connectedOnce
         True -> throwIO e
 
-  doConnect connectedOnce = runClient "127.0.0.1" (4000 + hydraNodeId) "/" $ \connection -> do
-    atomicWriteIORef connectedOnce True
-    traceWith tracer (NodeStarted hydraNodeId)
-    res <- action $ HydraClient{hydraNodeId, connection, tracer}
-    sendClose connection ("Bye" :: Text)
-    pure res
+  doConnect connectedOnce =
+    runClient (toString hostname) (fromIntegral port) "/" $ \connection -> do
+      atomicWriteIORef connectedOnce True
+      traceWith tracer (NodeStarted hydraNodeId)
+      res <- action $ HydraClient{hydraNodeId, apiHost, connection, tracer}
+      sendClose connection ("Bye" :: Text)
+      pure res
 
 -- | Runs an action with a new connection to given Hydra node.
 withNewClient :: HydraClient -> (HydraClient -> IO a) -> IO a
-withNewClient HydraClient{hydraNodeId, tracer} =
-  withConnectionToNode tracer hydraNodeId
+withNewClient HydraClient{hydraNodeId, apiHost, tracer} =
+  withConnectionToNode tracer hydraNodeId apiHost
 
 newtype CannotStartHydraClient = CannotStartHydraClient Int deriving (Show)
 instance Exception CannotStartHydraClient
@@ -289,8 +309,10 @@ defaultArguments ::
   [FilePath] ->
   FilePath ->
   [Int] ->
+  -- | API host
+  Host ->
   [String]
-defaultArguments nodeId cardanoSKey cardanoVKeys hydraSKey hydraVKeys nodeSocket allNodeIds =
+defaultArguments nodeId cardanoSKey cardanoVKeys hydraSKey hydraVKeys nodeSocket allNodeIds apiHost =
   [ "--node-id"
   , show nodeId
   , "--host"
@@ -298,9 +320,9 @@ defaultArguments nodeId cardanoSKey cardanoVKeys hydraSKey hydraVKeys nodeSocket
   , "--port"
   , show (5000 + nodeId)
   , "--api-host"
-  , "127.0.0.1"
+  , toString $ hostname apiHost
   , "--api-port"
-  , show (4000 + nodeId)
+  , show (port apiHost)
   , "--monitoring-port"
   , show (6000 + nodeId)
   , "--hydra-signing-key"
