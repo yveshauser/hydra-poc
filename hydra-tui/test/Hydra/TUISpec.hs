@@ -35,12 +35,11 @@ import Graphics.Vty (
  )
 import Graphics.Vty.Image (DisplayRegion)
 import Hydra.Logging (showLogsOnFailure)
-import Hydra.Network (Host (..))
 import Hydra.Party (generateKey)
 import qualified Hydra.Party as Hydra
 import Hydra.TUI (runWithVty)
 import Hydra.TUI.Options (Options (..))
-import HydraNode (EndToEndLog, HydraClient (HydraClient, hydraNodeId), withHydraNode)
+import HydraNode (EndToEndLog, HydraClient (HydraClient), apiHost, withHydraNode)
 import System.Posix (OpenMode (WriteOnly), closeFd, defaultFileFlags, openFd)
 
 spec :: Spec
@@ -101,25 +100,22 @@ setupNodeAndTUI action =
         -- XXX(SN): API port id is inferred from nodeId, in this case 4001
         let nodeId = 1
         pparams <- queryProtocolParameters defaultNetworkId nodeSocket
-        withHydraNode (contramap FromHydra tracer) aliceSkPath [] tmpDir nodeSocket nodeId aliceSk [] [nodeId] $ \HydraClient{hydraNodeId} -> do
-          postSeedPayment defaultNetworkId pparams availableInitialFunds nodeSocket aliceCardanoSk 900_000_000
-          withTUITest (150, 10) $ \brickTest@TUITest{buildVty} -> do
-            race_
-              ( runWithVty
-                  buildVty
-                  Options
-                    { hydraNodeHost =
-                        Host
-                          { hostname = "127.0.0.1"
-                          , port = 4000 + fromIntegral hydraNodeId
-                          }
-                    , cardanoNodeSocket = nodeSocket
-                    , cardanoNetworkId = defaultNetworkId
-                    , cardanoSigningKey = aliceSkPath
-                    }
-              )
-              $ do
-                action brickTest
+        withHydraNode (contramap FromHydra tracer) aliceSkPath [] tmpDir nodeSocket nodeId aliceSk [] [nodeId] $
+          \HydraClient{apiHost} -> do
+            postSeedPayment defaultNetworkId pparams availableInitialFunds nodeSocket aliceCardanoSk 900_000_000
+            withTUITest (150, 10) $ \brickTest@TUITest{buildVty} -> do
+              race_
+                ( runWithVty
+                    buildVty
+                    Options
+                      { hydraNodeHost = apiHost
+                      , cardanoNodeSocket = nodeSocket
+                      , cardanoNetworkId = defaultNetworkId
+                      , cardanoSigningKey = aliceSkPath
+                      }
+                )
+                $ do
+                  action brickTest
 
 data TUITest = TUITest
   { buildVty :: IO Vty
