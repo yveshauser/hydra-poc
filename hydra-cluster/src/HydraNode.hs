@@ -341,18 +341,17 @@ waitForNodesConnected tracer allNodeIds = mapM_ (waitForNodeConnected tracer all
 
 waitForNodeConnected :: HasCallStack => Tracer IO EndToEndLog -> [Int] -> HydraClient -> IO ()
 waitForNodeConnected tracer allNodeIds n@HydraClient{hydraNodeId} =
-  -- HACK(AB): This is gross, we hijack the node ids and because we know
-  -- keys are just integers we can compute them but that's ugly -> use property
-  -- party identifiers everywhere
+  -- HACK: This is gross, we rely on the knowledge that hydra network is
+  -- always listening on port 5000 + node id
   waitForAll tracer (fromIntegral $ 20 * length allNodeIds) [n] $
     fmap
-      ( \party ->
+      ( \nodeId ->
           object
             [ "tag" .= String "PeerConnected"
             , "peer"
                 .= object
                   [ "hostname" .= ("127.0.0.1" :: Text)
-                  , "port" .= (5000 + party)
+                  , "port" .= (5000 + nodeId)
                   ]
             ]
       )
