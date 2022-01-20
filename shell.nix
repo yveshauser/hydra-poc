@@ -44,8 +44,10 @@ let
     pkgs.gnuplot
   ];
 
-  haskellNixShell = args:
-    let defaultArgs = {
+  standardShell = haskellNixShell {};
+
+  haskellNixShell = overrides:
+    hsPkgs.shellFor ({
       packages = ps: with ps; [
         hydra-prelude
         hydra-node
@@ -67,8 +69,15 @@ let
 
       # Always create missing golden files
       CREATE_MISSING_GOLDEN = 1;
+    } // overrides) ;
+
+  ciShell = haskellNixShell {
+    withHoogle = false;
+
+    tools = {
+      cabal = "3.4.0.0";
     };
-    in hsPkgs.shellFor (defaultArgs // args) ;
+  };
 
   # A "cabal-only" shell which does not use haskell.nix
   cabalShell = pkgs.mkShell {
@@ -95,12 +104,7 @@ let
   };
 
 in
-haskellNixShell {} // {
+standardShell // {
+  ci = ciShell;
   cabalOnly = cabalShell;
-  ci = haskellNixShell {
-    withHoogle = false;
-    tools = {
-      cabal = "3.4.0.0";
-    };
-  };
 }
