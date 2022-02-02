@@ -93,12 +93,14 @@ data Actor
   = Alice
   | Bob
   | Carol
+  | Faucet
 
 actorName :: Actor -> String
 actorName = \case
   Alice -> "alice"
   Bob -> "bob"
   Carol -> "carol"
+  Faucet -> "faucet"
 
 keysFor :: Actor -> IO (VerificationKey PaymentKey, SigningKey PaymentKey)
 keysFor actor = do
