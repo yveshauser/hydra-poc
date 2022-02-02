@@ -33,7 +33,7 @@ import CardanoClient (
   txOutLovelace,
   waitForPayment,
  )
-import CardanoCluster (ClusterConfig (..), ClusterLog (..), RunningCluster (..), defaultNetworkId, keysFor, withCluster)
+import CardanoCluster (Actor (Alice), ClusterConfig (..), ClusterLog (..), RunningCluster (..), defaultNetworkId, keysFor, withCluster)
 import CardanoNode (ChainTip (..), RunningNode (..), cliQueryTip)
 import qualified Data.Map as Map
 import Hydra.Chain.Direct.Tx (policyId)
@@ -48,7 +48,7 @@ spec =
   it "should produce blocks, provide funds, and send Hydra OCV transactions" $ do
     showLogsOnFailure $ \tr ->
       withTempDir "hydra-cluster" $ \tmp -> do
-        (vk, _) <- keysFor "alice"
+        (vk, _) <- keysFor Alice
         let config =
               ClusterConfig
                 { parentStateDirectory = tmp
@@ -77,7 +77,7 @@ assertNetworkIsProducingBlock tracer = go (-1)
 assertCanSpendInitialFunds :: HasCallStack => RunningCluster -> IO ()
 assertCanSpendInitialFunds = \case
   (RunningCluster ClusterConfig{networkId} (RunningNode _ socket : _)) -> do
-    (vk, sk) <- keysFor "alice"
+    (vk, sk) <- keysFor Alice
     let addr = buildAddress vk networkId
     UTxO utxo <- queryUtxo networkId socket [addr]
     pparams <- queryProtocolParameters networkId socket
@@ -105,7 +105,7 @@ assertCanSpendInitialFunds = \case
 assertCanCallInitAndAbort :: HasCallStack => RunningCluster -> IO ()
 assertCanCallInitAndAbort = \case
   (RunningCluster ClusterConfig{networkId} (RunningNode _ socket : _)) -> do
-    (vk, sk) <- keysFor "alice"
+    (vk, sk) <- keysFor Alice
     let addr = buildAddress vk networkId
         headScript = toCardanoApiScript $ Head.validatorScript policyId
         headAddress = buildScriptAddress headScript networkId
