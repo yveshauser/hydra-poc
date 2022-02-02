@@ -61,7 +61,7 @@ data OnChainHeadState
         -- XXX(SN): Data and [OnChain.Party] are overlapping
         threadOutput :: (TxIn, TxOut CtxUTxO Era, ScriptData, [OnChain.Party])
       }
-  | Final
+  | Final -- TODO: We could merge this with 'None'
   deriving (Eq, Show, Generic)
 
 -- FIXME: should not be hardcoded, for testing purposes only
