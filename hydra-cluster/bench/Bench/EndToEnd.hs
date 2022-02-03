@@ -87,7 +87,7 @@ bench timeoutSeconds workDir dataset clusterSize =
         withBFTNode (contramap FromCluster tracer) config (fst <$> cardanoKeys) $ \(RunningNode _ nodeSocket) -> do
           withHydraCluster tracer workDir nodeSocket cardanoKeys [] $ \(leader :| followers) -> do
             let nodes = leader : followers
-            waitForNodesConnected tracer [1 .. fromIntegral clusterSize] nodes
+            waitForNodesConnected tracer nodes
 
             initialUTxOs <- createUTxOToCommit dataset nodeSocket
 

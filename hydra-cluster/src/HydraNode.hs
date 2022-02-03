@@ -328,24 +328,22 @@ defaultArguments nodeId cardanoSKey cardanoVKeys hydraSKey hydraVKeys nodeSocket
     <> ["--network-magic", "42"]
     <> ["--node-socket", nodeSocket]
 
-waitForNodesConnected :: HasCallStack => Tracer IO EndToEndLog -> [Int] -> [HydraClient] -> IO ()
-waitForNodesConnected tracer allNodeIds = mapM_ (waitForNodeConnected tracer allNodeIds)
-
-waitForNodeConnected :: HasCallStack => Tracer IO EndToEndLog -> [Int] -> HydraClient -> IO ()
-waitForNodeConnected tracer allNodeIds n@HydraClient{hydraNodeId} =
-  -- HACK(AB): This is gross, we hijack the node ids and because we know
-  -- keys are just integers we can compute them but that's ugly -> use property
-  -- party identifiers everywhere
-  waitForAll tracer (fromIntegral $ 20 * length allNodeIds) [n] $
-    fmap
-      ( \nodeId ->
-          object
-            [ "tag" .= String "PeerConnected"
-            , "peer"
-                .= object
-                  [ "hostname" .= ("127.0.0.1" :: Text)
-                  , "port" .= (5000 + nodeId)
-                  ]
-            ]
-      )
-      (filter (/= hydraNodeId) allNodeIds)
+waitForNodesConnected :: HasCallStack => Tracer IO EndToEndLog -> [HydraClient] -> IO ()
+waitForNodesConnected tracer clients =
+  mapM_ waitForNodeConnected clients
+ where
+  allNodeIds = hydraNodeId <$> clients
+  waitForNodeConnected n@HydraClient{hydraNodeId} =
+    waitForAll tracer (fromIntegral $ 20 * length allNodeIds) [n] $
+      fmap
+        ( \nodeId ->
+            object
+              [ "tag" .= String "PeerConnected"
+              , "peer"
+                  .= object
+                    [ "hostname" .= ("127.0.0.1" :: Text)
+                    , "port" .= (5000 + nodeId)
+                    ]
+              ]
+        )
+        (filter (/= hydraNodeId) allNodeIds)

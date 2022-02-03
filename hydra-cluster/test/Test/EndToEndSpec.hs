@@ -145,7 +145,7 @@ spec = around showLogsOnFailure $
                 withHydraNode tracer bobSkPath [aliceVkPath, carolVkPath] tmpDir nodeSocket 2 bobSk [aliceVk, carolVk] allNodeIds $ \_ ->
                   withHydraNode tracer carolSkPath [aliceVkPath, bobVkPath] tmpDir nodeSocket 3 carolSk [aliceVk, bobVk] allNodeIds $ \_ -> do
                     postSeedPayment defaultNetworkId pparams availableInitialFunds nodeSocket aliceCardanoSk 100_000_000
-                    waitForNodesConnected tracer allNodeIds [n1]
+                    waitForNodesConnected tracer [n1]
                     send n1 $ input "Init" ["contestationPeriod" .= int 10]
                     waitFor tracer 3 [n1] $ output "ReadyToCommit" ["parties" .= Set.fromList [alice, bob, carol]]
                     metrics <- getMetrics n1
@@ -169,7 +169,7 @@ initAndClose tracer node@(RunningNode _ nodeSocket) = do
 
     withHydraCluster tracer tmpDir nodeSocket 1 cardanoKeys hydraKeys $ \nodes -> do
       let [n1, n2, n3] = toList nodes
-      waitForNodesConnected tracer [1 .. length cardanoKeys] [n1, n2, n3]
+      waitForNodesConnected tracer [n1, n2, n3]
 
       -- Funds to be used as fuel by Hydra protocol transactions
       void $ seedFromFaucet defaultNetworkId node aliceCardanoVk 100_000_000 Marked
