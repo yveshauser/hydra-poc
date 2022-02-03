@@ -12,7 +12,6 @@ import Cardano.Crypto.DSIGN (
   VerKeyDSIGN,
  )
 import CardanoClient (
-  generatePaymentToCommit,
   postSeedPayment,
   queryProtocolParameters,
   waitForUtxo,
@@ -109,16 +108,16 @@ spec = around showLogsOnFailure $
                     waitFor tracer 20 [n1, n2, n3] $
                       output "ReadyToCommit" ["parties" .= Set.fromList [alice, bob, carol]]
 
-                    committedUtxo <- generatePaymentToCommit defaultNetworkId node aliceCardanoSk aliceCardanoVk amountInTx
-                    committedUtxoBy2 <- generatePaymentToCommit defaultNetworkId node bobCardanoSk bobCardanoVk amountInTx
-
-                    send n1 $ input "Commit" ["utxo" .= committedUtxo]
-                    send n2 $ input "Commit" ["utxo" .= committedUtxoBy2]
+                    -- Get some UTXOs to commit to a head
+                    committedUtxoByAlice <- seedFromFaucet defaultNetworkId node aliceCardanoVk aliceCommittedToHead Normal
+                    committedUtxoByBob <- seedFromFaucet defaultNetworkId node bobCardanoVk bobCommittedToHead Normal
+                    send n1 $ input "Commit" ["utxo" .= committedUtxoByAlice]
+                    send n2 $ input "Commit" ["utxo" .= committedUtxoByBob]
                     send n3 $ input "Commit" ["utxo" .= Object mempty]
-                    waitFor tracer 20 [n1, n2, n3] $ output "HeadIsOpen" ["utxo" .= (committedUtxo <> committedUtxoBy2)]
+                    waitFor tracer 20 [n1, n2, n3] $ output "HeadIsOpen" ["utxo" .= (committedUtxoByAlice <> committedUtxoByBob)]
 
                     -- NOTE(AB): this is partial and will fail if we are not able to generate a payment
-                    let firstCommittedUtxo = Prelude.head $ utxoPairs committedUtxo
+                    let firstCommittedUtxo = Prelude.head $ utxoPairs committedUtxoByAlice
                     let Right tx =
                           mkSimpleCardanoTx
                             firstCommittedUtxo
@@ -128,9 +127,10 @@ spec = around showLogsOnFailure $
                     waitFor tracer 20 [n1, n2, n3] $
                       output "TxSeen" ["transaction" .= tx]
 
-                    -- The expected new utxo set is the created payment +
-                    -- change outputs, both owned by alice + Utxo commited by bob
-                    let aliceUtxo =
+                    -- The expected new utxo set is the created payment to bob,
+                    -- alice's remaining utxo in head and whatever bot has
+                    -- committed to the head
+                    let newUtxo =
                           Map.fromList
                             [
                               ( TxIn (txId tx) (toEnum 0)
@@ -143,13 +143,13 @@ spec = around showLogsOnFailure $
                               ( TxIn (txId tx) (toEnum 1)
                               , object
                                   [ "address" .= String (serialiseAddress $ inHeadAddress aliceCardanoVk)
-                                  , "value" .= object ["lovelace" .= int (amountInTx - paymentFromAliceToBob)]
+                                  , "value" .= object ["lovelace" .= int (aliceCommittedToHead - paymentFromAliceToBob)]
                                   ]
                               )
                             ]
-                        newUtxo = aliceUtxo <> fmap toJSON (Map.fromList (utxoPairs committedUtxoBy2))
+                            <> fmap toJSON (Map.fromList (utxoPairs committedUtxoByBob))
 
-                        expectedSnapshot =
+                    let expectedSnapshot =
                           object
                             [ "snapshotNumber" .= int 1
                             , "utxo" .= newUtxo
@@ -246,8 +246,11 @@ spec = around showLogsOnFailure $
 -- Fixtures
 --
 
-amountInTx :: Num a => a
-amountInTx = 2_000_000
+aliceCommittedToHead :: Num a => a
+aliceCommittedToHead = 20_000_000
+
+bobCommittedToHead :: Num a => a
+bobCommittedToHead = 5_000_000
 
 paymentFromAliceToBob :: Num a => a
 paymentFromAliceToBob = 1_000_000
