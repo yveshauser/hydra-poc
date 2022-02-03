@@ -178,12 +178,19 @@ spec = around showLogsOnFailure $
             config <- newNodeConfig tmpDir
             (faucetVk, _) <- keysFor Faucet
             withBFTNode (contramap FromCluster tracer) config [faucetVk] $ \node -> do
-              -- TODO: Run the whole thing below concurrently using the same
-              -- keys, but in two distinct heads. (This also requires us to
-              -- create a faucet and distribute funds from there)
               initAndClose tracer node
 
-    describe "two hydra heads scenario" $
+    describe "two hydra heads scenario" $ do
+      it "two heads on the same network do not conflict" $ \tracer ->
+        failAfter 60 $
+          withTempDir "end-to-end-cardano-node" $ \tmpDir -> do
+            config <- newNodeConfig tmpDir
+            (faucetVk, _) <- keysFor Faucet
+            withBFTNode (contramap FromCluster tracer) config [faucetVk] $ \node -> do
+              concurrently_
+                (initAndClose tracer node)
+                (initAndClose tracer node)
+
       it "bob cannot abort alice's head" $ \tracer ->
         failAfter 60 $
           withTempDir "end-to-end-two-heads" $ \tmpDir -> do
