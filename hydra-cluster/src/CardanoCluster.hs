@@ -14,7 +14,6 @@ import Cardano.Api (
   PaymentKey,
   SigningKey,
   TextEnvelopeError (TextEnvelopeAesonDecodeError),
-  UTxO (UTxO),
   VerificationKey,
   deserialiseFromTextEnvelope,
   getVerificationKey,
@@ -22,7 +21,7 @@ import Cardano.Api (
  )
 import Cardano.Api.Shelley (VerificationKey (PaymentVerificationKey))
 import Cardano.Ledger.Keys (VKey (VKey))
-import CardanoClient (buildAddress, queryUtxo)
+import CardanoClient (build, buildAddress, markerDatumHash, queryUtxo, sign, submit, txOutLovelace, waitForPayment)
 import CardanoNode (
   CardanoNodeArgs (..),
   CardanoNodeConfig (..),
@@ -43,6 +42,7 @@ import Data.Aeson.Lens (key)
 import qualified Data.ByteString as BS
 import Data.ByteString.Base16 (encodeBase16)
 import qualified Hydra.Chain.Direct.Util as Cardano
+import Hydra.Ledger.Cardano (TxOut (TxOut), fromCardanoApiUtxo, lovelaceToTxOutValue, shelleyAddressInEra, utxoPairs)
 import qualified Paths_hydra_cluster as Pkg
 import System.Directory (createDirectoryIfMissing, doesFileExist)
 import System.FilePath ((<.>), (</>))
@@ -229,6 +229,9 @@ withBFTNode clusterTracer cfg initialFunds action = do
 
 -- | Create a specially marked "seed" UTXO containing requested 'Lovelace' by
 -- redeeming funds available to the well-known faucet.
+--
+-- NOTE: This function is querying and looping forever until it finds a suitable
+-- output!
 seedFromFaucet ::
   NetworkId ->
   RunningNode ->
@@ -236,10 +239,31 @@ seedFromFaucet ::
   VerificationKey PaymentKey ->
   Lovelace ->
   IO ()
-seedFromFaucet networkId (RunningNode _ nodeSocket) _receivingVerificationKey _lovelace = do
-  (faucetVk, _) <- keysFor Faucet
-  UTxO faucetUtxo <- queryUtxo networkId nodeSocket [buildAddress faucetVk networkId]
-  print faucetUtxo
+seedFromFaucet networkId (RunningNode _ nodeSocket) receivingVerificationKey lovelace = do
+  (faucetVk, faucetSk) <- keysFor Faucet
+  (i, _o) <- findUtxo faucetVk
+  let changeAddress = buildAddress faucetVk networkId
+  build networkId nodeSocket changeAddress [(i, Nothing)] [] [theOutput] >>= \case
+    Left e -> error (show e)
+    Right body -> do
+      submit networkId nodeSocket $ sign faucetSk body
+      void $ waitForPayment networkId nodeSocket lovelace receivingAddress
+ where
+  findUtxo faucetVk = do
+    faucetUtxo <- fromCardanoApiUtxo <$> queryUtxo networkId nodeSocket [buildAddress faucetVk networkId]
+    let foundUtxo = find (\(_i, o) -> txOutLovelace o >= lovelace) $ utxoPairs faucetUtxo
+    case foundUtxo of
+      Just o -> pure o
+      Nothing ->
+        findUtxo faucetVk
+
+  receivingAddress = buildAddress receivingVerificationKey networkId
+
+  theOutput =
+    TxOut
+      (shelleyAddressInEra receivingAddress)
+      (lovelaceToTxOutValue lovelace)
+      markerDatumHash
 
 -- | Initialize the system start time to now (modulo a small offset needed to
 -- give time to the system to bootstrap correctly).

@@ -1,5 +1,3 @@
-{-# LANGUAGE TypeApplications #-}
-
 -- | A basic cardano-node client that can talk to a local cardano-node.
 --
 -- The idea of this module is to provide a Haskell interface on top of cardano-cli's API,
@@ -103,7 +101,7 @@ txOutLovelace (TxOut _ val _) =
     TxOutAdaOnly _ l -> l
     TxOutValue _ v -> selectLovelace v
 
--- |Query current protocol parameters.
+-- | Query current protocol parameters.
 --
 -- Throws 'CardanoClientException' if query fails.
 queryProtocolParameters :: NetworkId -> FilePath -> IO ProtocolParameters
@@ -191,7 +189,9 @@ build ::
   NetworkId ->
   FilePath ->
   Address ShelleyAddr ->
+  -- | Inputs
   [(TxIn, Maybe (Script PlutusScriptV1, ScriptData, ScriptRedeemer))] ->
+  -- | Collateral
   [TxIn] ->
   [TxOut CtxTx AlonzoEra] ->
   IO (Either TxBodyErrorAutoBalance (TxBody AlonzoEra))
@@ -353,6 +353,10 @@ waitForTransaction networkId socket tx = go
       then go
       else pure utxo
 
+markerDatumHash :: TxOutDatum ctx AlonzoEra
+markerDatumHash =
+  TxOutDatumHash ScriptDataInAlonzoEra (hashScriptData $ fromPlutusData Hydra.markerDatum)
+
 mkGenesisTx ::
   NetworkId ->
   ProtocolParameters ->
@@ -381,7 +385,7 @@ mkGenesisTx networkId pparams initialAmount signingKey verificationKey amount =
         TxOut
           changeAddr
           (lovelaceToTxOutValue $ initialAmount - amount - fee)
-          (TxOutDatumHash ScriptDataInAlonzoEra (hashScriptData $ fromPlutusData Hydra.markerDatum))
+          markerDatumHash
 
       recipientAddr = mkVkAddress networkId verificationKey
       recipientOutput =
