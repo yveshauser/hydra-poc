@@ -191,29 +191,34 @@ withHydraCluster ::
   Tracer IO EndToEndLog ->
   FilePath ->
   FilePath ->
+  -- | First node id
+  Int ->
+  -- | NOTE: This decides on the size of the cluster!
   [(VerificationKey PaymentKey, SigningKey PaymentKey)] ->
   [Hydra.SigningKey] ->
   (NonEmpty HydraClient -> IO ()) ->
   IO ()
-withHydraCluster tracer workDir nodeSocket allKeys hydraKeys action = do
-  case length allKeys of
-    0 -> error "Cannot run a cluster with 0 number of nodes"
-    n -> do
-      forM_ (zip allKeys [1 .. n]) $ \((vk, sk), ix) -> do
-        let vkFile = workDir </> show ix <.> "vk"
-        let skFile = workDir </> show ix <.> "sk"
-        void $ writeFileTextEnvelope vkFile Nothing vk
-        void $ writeFileTextEnvelope skFile Nothing sk
+withHydraCluster tracer workDir nodeSocket firstNodeId allKeys hydraKeys action = do
+  -- We have been bitten by this in the past
+  when (clusterSize == 0) $
+    error "Cannot run a cluster with 0 number of nodes"
 
-      go n [] [1 .. n]
+  forM_ (zip allKeys allNodeIds) $ \((vk, sk), ix) -> do
+    let vkFile = workDir </> show ix <.> "vk"
+    let skFile = workDir </> show ix <.> "sk"
+    void $ writeFileTextEnvelope vkFile Nothing vk
+    void $ writeFileTextEnvelope skFile Nothing sk
+  startNodes [] allNodeIds
  where
+  clusterSize = length allKeys
+  allNodeIds = [firstNodeId .. firstNodeId + clusterSize - 1]
+
   hydraVKeys = map deriveVerKeyDSIGN hydraKeys
 
-  go n clients = \case
+  startNodes clients = \case
     [] -> action (fromList $ reverse clients)
     (nodeId : rest) -> do
-      let allNodeIds = [1 .. n]
-          hydraSKey = hydraKeys Prelude.!! (nodeId - 1)
+      let hydraSKey = hydraKeys Prelude.!! (nodeId - firstNodeId)
           cardanoVKeys = [workDir </> show i <.> "vk" | i <- allNodeIds, i /= nodeId]
           cardanoSKey = workDir </> show nodeId <.> "sk"
 
@@ -227,7 +232,7 @@ withHydraCluster tracer workDir nodeSocket allKeys hydraKeys action = do
         hydraSKey
         hydraVKeys
         allNodeIds
-        (\c -> go n (c : clients) rest)
+        (\c -> startNodes (c : clients) rest)
 
 withHydraNode ::
   forall alg.
@@ -333,13 +338,13 @@ waitForNodeConnected tracer allNodeIds n@HydraClient{hydraNodeId} =
   -- party identifiers everywhere
   waitForAll tracer (fromIntegral $ 20 * length allNodeIds) [n] $
     fmap
-      ( \party ->
+      ( \nodeId ->
           object
             [ "tag" .= String "PeerConnected"
             , "peer"
                 .= object
                   [ "hostname" .= ("127.0.0.1" :: Text)
-                  , "port" .= (5000 + party)
+                  , "port" .= (5000 + nodeId)
                   ]
             ]
       )

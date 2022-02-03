@@ -167,7 +167,7 @@ initAndClose tracer node@(RunningNode _ nodeSocket) = do
     let cardanoKeys = [aliceKeys, bobKeys, carolKeys]
         hydraKeys = [aliceSk, bobSk, carolSk]
 
-    withHydraCluster tracer tmpDir nodeSocket cardanoKeys hydraKeys $ \nodes -> do
+    withHydraCluster tracer tmpDir nodeSocket 1 cardanoKeys hydraKeys $ \nodes -> do
       let [n1, n2, n3] = toList nodes
       waitForNodesConnected tracer [1 .. length cardanoKeys] [n1, n2, n3]
 
