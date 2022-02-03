@@ -185,6 +185,8 @@ data EndToEndLog
   | FromCluster ClusterLog
   deriving (Eq, Show, Generic, ToJSON, FromJSON, ToObject)
 
+-- XXX: The two lists need to be of same length. Also the verification keys can
+-- be derived from the signing keys.
 withHydraCluster ::
   Tracer IO EndToEndLog ->
   FilePath ->
@@ -206,11 +208,12 @@ withHydraCluster tracer workDir nodeSocket allKeys hydraKeys action = do
       go n [] [1 .. n]
  where
   hydraVKeys = map deriveVerKeyDSIGN hydraKeys
+
   go n clients = \case
     [] -> action (fromList $ reverse clients)
     (nodeId : rest) -> do
       let allNodeIds = [1 .. n]
-          hydraSKey = hydraKeys Prelude.!! nodeId
+          hydraSKey = hydraKeys Prelude.!! (nodeId - 1)
           cardanoVKeys = [workDir </> show i <.> "vk" | i <- allNodeIds, i /= nodeId]
           cardanoSKey = workDir </> show nodeId <.> "sk"
 
