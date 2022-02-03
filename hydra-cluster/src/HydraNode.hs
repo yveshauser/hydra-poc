@@ -95,14 +95,20 @@ waitNext HydraClient{connection} = do
     Right value -> pure value
 
 waitMatch :: HasCallStack => Natural -> HydraClient -> (Aeson.Value -> Maybe a) -> IO a
-waitMatch delay HydraClient{connection} match = do
+waitMatch delay HydraClient{hydraNodeId, connection} match = do
   seenMsgs <- newTVarIO []
   timeout (fromIntegral delay * 1_000_000) (go seenMsgs) >>= \case
     Just x -> pure x
     Nothing -> do
       msgs <- readTVarIO seenMsgs
       failure $
-        "Didn't match within allocated time. There were some messages " <> show (length msgs) <> " messages received though"
+        toString $
+          unlines
+            [ "waitMatch did not match a message within " <> show delay <> "s"
+            , padRight ' ' 20 "  nodeId:" <> show hydraNodeId
+            , padRight ' ' 20 "  seen messages:"
+                <> unlines (align 20 (decodeUtf8 . Aeson.encode <$> msgs))
+            ]
  where
   go seenMsgs = do
     bytes <- receiveData connection
@@ -111,6 +117,9 @@ waitMatch delay HydraClient{connection} match = do
       Just msg -> do
         atomically (modifyTVar' seenMsgs (msg :))
         maybe (go seenMsgs) pure (match msg)
+
+  align _ [] = []
+  align n (h : q) = h : fmap (T.replicate n " " <>) q
 
 -- | Wait some time for a list of outputs from each of given nodes.
 -- This function is the generalised version of 'waitFor', allowing several messages
@@ -129,7 +138,7 @@ waitForAll tracer delay nodes expected = do
         failure $
           toString $
             unlines
-              [ "waitFor... timeout!"
+              [ "waitForAll timed out after " <> show delay <> "s"
               , padRight ' ' 20 "  nodeId:"
                   <> show hydraNodeId
               , padRight ' ' 20 "  expected:"
