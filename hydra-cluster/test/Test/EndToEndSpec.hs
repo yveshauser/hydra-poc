@@ -82,7 +82,7 @@ spec = around showLogsOnFailure $
             config <- newNodeConfig tmpDir
             (faucetVk, _) <- keysFor Faucet
             withBFTNode (contramap FromCluster tracer) config [faucetVk] $ \node -> do
-              initAndClose tracer node
+              initAndClose tracer 1 node
 
     describe "two hydra heads scenario" $ do
       it "two heads on the same network do not conflict" $ \tracer ->
@@ -92,8 +92,8 @@ spec = around showLogsOnFailure $
             (faucetVk, _) <- keysFor Faucet
             withBFTNode (contramap FromCluster tracer) config [faucetVk] $ \node -> do
               concurrently_
-                (initAndClose tracer node)
-                (initAndClose tracer node)
+                (initAndClose tracer 0 node)
+                (initAndClose tracer 1 node)
 
       it "bob cannot abort alice's head" $ \tracer ->
         failAfter 60 $
@@ -157,8 +157,8 @@ spec = around showLogsOnFailure $
           version <- readCreateProcess (hydraNodeProcess ["--version"]) ""
           version `shouldSatisfy` (=~ ("[0-9]+\\.[0-9]+\\.[0-9]+(-[a-zA-Z0-9]+)?" :: String))
 
-initAndClose :: Tracer IO EndToEndLog -> RunningNode -> IO ()
-initAndClose tracer node@(RunningNode _ nodeSocket) = do
+initAndClose :: Tracer IO EndToEndLog -> Int -> RunningNode -> IO ()
+initAndClose tracer clusterIx node@(RunningNode _ nodeSocket) = do
   withTempDir "end-to-end-init-and-close" $ \tmpDir -> do
     aliceKeys@(aliceCardanoVk, aliceCardanoSk) <- keysFor Alice
     bobKeys@(bobCardanoVk, _) <- keysFor Bob
@@ -167,7 +167,9 @@ initAndClose tracer node@(RunningNode _ nodeSocket) = do
     let cardanoKeys = [aliceKeys, bobKeys, carolKeys]
         hydraKeys = [aliceSk, bobSk, carolSk]
 
-    withHydraCluster tracer tmpDir nodeSocket 1 cardanoKeys hydraKeys $ \nodes -> do
+    let firstNodeId = clusterIx * 3
+
+    withHydraCluster tracer tmpDir nodeSocket firstNodeId cardanoKeys hydraKeys $ \nodes -> do
       let [n1, n2, n3] = toList nodes
       waitForNodesConnected tracer [n1, n2, n3]
 
