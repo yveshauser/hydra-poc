@@ -28,8 +28,6 @@ import Hydra.Prelude hiding (delete)
 import Cardano.BM.Tracing (ToObject)
 import Cardano.Crypto.DSIGN (
   DSIGNAlgorithm (..),
-  SignKeyDSIGN (SignKeyMockDSIGN),
-  VerKeyDSIGN (VerKeyMockDSIGN),
  )
 import CardanoCluster (ClusterLog)
 import Control.Concurrent.Async (
@@ -44,6 +42,7 @@ import qualified Data.ByteString as BS
 import qualified Data.List as List
 import qualified Data.Text as T
 import Hydra.Logging (Tracer, traceWith)
+import qualified Hydra.Party as Hydra
 import Network.HTTP.Conduit (HttpExceptionContent (ConnectionFailure), parseRequest)
 import Network.HTTP.Simple (HttpException (HttpExceptionRequest), Response, getResponseBody, getResponseStatusCode, httpBS)
 import Network.WebSockets (Connection, receiveData, runClient, sendClose, sendTextData)
@@ -60,6 +59,7 @@ import System.Process (
  )
 import System.Timeout (timeout)
 import Test.Hydra.Prelude (checkProcessHasNotDied, failAfter, failure, withFile')
+import qualified Prelude
 
 data HydraClient = HydraClient
   { hydraNodeId :: Int
@@ -190,10 +190,11 @@ withHydraCluster ::
   FilePath ->
   FilePath ->
   [(VerificationKey PaymentKey, SigningKey PaymentKey)] ->
+  [Hydra.SigningKey] ->
   (NonEmpty HydraClient -> IO ()) ->
   IO ()
-withHydraCluster tracer workDir nodeSocket allKeys action = do
-  case fromIntegral (length allKeys) of
+withHydraCluster tracer workDir nodeSocket allKeys hydraKeys action = do
+  case length allKeys of
     0 -> error "Cannot run a cluster with 0 number of nodes"
     n -> do
       forM_ (zip allKeys [1 .. n]) $ \((vk, sk), ix) -> do
@@ -204,11 +205,12 @@ withHydraCluster tracer workDir nodeSocket allKeys action = do
 
       go n [] [1 .. n]
  where
+  hydraVKeys = map deriveVerKeyDSIGN hydraKeys
   go n clients = \case
     [] -> action (fromList $ reverse clients)
     (nodeId : rest) -> do
-      let hydraVKeys = map VerKeyMockDSIGN $ filter (/= nodeId) allNodeIds
-          hydraSKey = SignKeyMockDSIGN nodeId
+      let allNodeIds = [1 .. n]
+          hydraSKey = hydraKeys Prelude.!! nodeId
           cardanoVKeys = [workDir </> show i <.> "vk" | i <- allNodeIds, i /= nodeId]
           cardanoSKey = workDir </> show nodeId <.> "sk"
 
@@ -218,13 +220,11 @@ withHydraCluster tracer workDir nodeSocket allKeys action = do
         cardanoVKeys
         workDir
         nodeSocket
-        (fromIntegral nodeId)
+        nodeId
         hydraSKey
         hydraVKeys
-        (map fromIntegral allNodeIds)
+        allNodeIds
         (\c -> go n (c : clients) rest)
-     where
-      allNodeIds = [1 .. n]
 
 withHydraNode ::
   forall alg.

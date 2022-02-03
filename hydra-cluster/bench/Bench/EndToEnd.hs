@@ -85,7 +85,7 @@ bench timeoutSeconds workDir dataset clusterSize =
         let cardanoKeys = map (\Dataset{signingKey} -> (getVerificationKey signingKey, signingKey)) dataset
         config <- newNodeConfig workDir
         withBFTNode (contramap FromCluster tracer) config (fst <$> cardanoKeys) $ \(RunningNode _ nodeSocket) -> do
-          withHydraCluster tracer workDir nodeSocket cardanoKeys $ \(leader :| followers) -> do
+          withHydraCluster tracer workDir nodeSocket cardanoKeys [] $ \(leader :| followers) -> do
             let nodes = leader : followers
             waitForNodesConnected tracer [1 .. fromIntegral clusterSize] nodes
 

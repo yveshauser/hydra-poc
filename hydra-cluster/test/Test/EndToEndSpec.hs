@@ -62,6 +62,7 @@ import HydraNode (
   waitFor,
   waitForNodesConnected,
   waitMatch,
+  withHydraCluster,
   withHydraNode,
  )
 import Text.Regex.TDFA ((=~))
@@ -159,98 +160,97 @@ spec = around showLogsOnFailure $
 initAndClose :: Tracer IO EndToEndLog -> RunningNode -> IO ()
 initAndClose tracer node@(RunningNode _ nodeSocket) = do
   withTempDir "end-to-end-init-and-close" $ \tmpDir -> do
-    (aliceCardanoVk, aliceCardanoSk) <- keysFor Alice
-    (bobCardanoVk, _bobCardanoSk) <- keysFor Bob
-    (carolCardanoVk, _) <- keysFor Carol
-    (aliceVkPath, aliceSkPath) <- writeKeysFor tmpDir Alice
-    (bobVkPath, bobSkPath) <- writeKeysFor tmpDir Bob
-    (carolVkPath, carolSkPath) <- writeKeysFor tmpDir Carol
+    aliceKeys@(aliceCardanoVk, aliceCardanoSk) <- keysFor Alice
+    bobKeys@(bobCardanoVk, _) <- keysFor Bob
+    carolKeys@(carolCardanoVk, _) <- keysFor Carol
 
-    withHydraNode tracer aliceSkPath [bobVkPath, carolVkPath] tmpDir nodeSocket 1 aliceSk [bobVk, carolVk] allNodeIds $ \n1 ->
-      withHydraNode tracer bobSkPath [aliceVkPath, carolVkPath] tmpDir nodeSocket 2 bobSk [aliceVk, carolVk] allNodeIds $ \n2 ->
-        withHydraNode tracer carolSkPath [aliceVkPath, bobVkPath] tmpDir nodeSocket 3 carolSk [aliceVk, bobVk] allNodeIds $ \n3 -> do
-          waitForNodesConnected tracer allNodeIds [n1, n2, n3]
+    let cardanoKeys = [aliceKeys, bobKeys, carolKeys]
+        hydraKeys = [aliceSk, bobSk, carolSk]
 
-          -- Funds to be used as fuel by Hydra protocol transactions
-          void $ seedFromFaucet defaultNetworkId node aliceCardanoVk 100_000_000 Marked
-          void $ seedFromFaucet defaultNetworkId node bobCardanoVk 100_000_000 Marked
-          void $ seedFromFaucet defaultNetworkId node carolCardanoVk 100_000_000 Marked
+    withHydraCluster tracer tmpDir nodeSocket cardanoKeys hydraKeys $ \nodes -> do
+      let [n1, n2, n3] = toList nodes
+      waitForNodesConnected tracer [1 .. length cardanoKeys] [n1, n2, n3]
 
-          let contestationPeriod = 10 :: Natural
-          send n1 $ input "Init" ["contestationPeriod" .= contestationPeriod]
-          waitFor tracer 20 [n1, n2, n3] $
-            output "ReadyToCommit" ["parties" .= Set.fromList [alice, bob, carol]]
+      -- Funds to be used as fuel by Hydra protocol transactions
+      void $ seedFromFaucet defaultNetworkId node aliceCardanoVk 100_000_000 Marked
+      void $ seedFromFaucet defaultNetworkId node bobCardanoVk 100_000_000 Marked
+      void $ seedFromFaucet defaultNetworkId node carolCardanoVk 100_000_000 Marked
 
-          -- Get some UTXOs to commit to a head
-          committedUTxOByAlice <- seedFromFaucet defaultNetworkId node aliceCardanoVk aliceCommittedToHead Normal
-          committedUTxOByBob <- seedFromFaucet defaultNetworkId node bobCardanoVk bobCommittedToHead Normal
-          send n1 $ input "Commit" ["utxo" .= committedUTxOByAlice]
-          send n2 $ input "Commit" ["utxo" .= committedUTxOByBob]
-          send n3 $ input "Commit" ["utxo" .= Object mempty]
-          waitFor tracer 20 [n1, n2, n3] $ output "HeadIsOpen" ["utxo" .= (committedUTxOByAlice <> committedUTxOByBob)]
+      let contestationPeriod = 10 :: Natural
+      send n1 $ input "Init" ["contestationPeriod" .= contestationPeriod]
+      waitFor tracer 20 [n1, n2, n3] $
+        output "ReadyToCommit" ["parties" .= Set.fromList [alice, bob, carol]]
 
-          -- NOTE(AB): this is partial and will fail if we are not able to generate a payment
-          let firstCommittedUTxO = Prelude.head $ UTxO.pairs committedUTxOByAlice
-          let Right tx =
-                mkSimpleTx
-                  firstCommittedUTxO
-                  (inHeadAddress bobCardanoVk, lovelaceToValue paymentFromAliceToBob)
-                  aliceCardanoSk
-          send n1 $ input "NewTx" ["transaction" .= tx]
-          waitFor tracer 20 [n1, n2, n3] $
-            output "TxSeen" ["transaction" .= tx]
+      -- Get some UTXOs to commit to a head
+      committedUTxOByAlice <- seedFromFaucet defaultNetworkId node aliceCardanoVk aliceCommittedToHead Normal
+      committedUTxOByBob <- seedFromFaucet defaultNetworkId node bobCardanoVk bobCommittedToHead Normal
+      send n1 $ input "Commit" ["utxo" .= committedUTxOByAlice]
+      send n2 $ input "Commit" ["utxo" .= committedUTxOByBob]
+      send n3 $ input "Commit" ["utxo" .= Object mempty]
+      waitFor tracer 20 [n1, n2, n3] $ output "HeadIsOpen" ["utxo" .= (committedUTxOByAlice <> committedUTxOByBob)]
 
-          -- The expected new utxo set is the created payment to bob,
-          -- alice's remaining utxo in head and whatever bot has
-          -- committed to the head
-          let newUTxO =
-                Map.fromList
-                  [
-                    ( TxIn (txId tx) (toEnum 0)
-                    , object
-                        [ "address" .= String (serialiseAddress $ inHeadAddress bobCardanoVk)
-                        , "value" .= object ["lovelace" .= int paymentFromAliceToBob]
-                        ]
-                    )
-                  ,
-                    ( TxIn (txId tx) (toEnum 1)
-                    , object
-                        [ "address" .= String (serialiseAddress $ inHeadAddress aliceCardanoVk)
-                        , "value" .= object ["lovelace" .= int (aliceCommittedToHead - paymentFromAliceToBob)]
-                        ]
-                    )
-                  ]
-                  <> fmap toJSON (Map.fromList (UTxO.pairs committedUTxOByBob))
+      -- NOTE(AB): this is partial and will fail if we are not able to generate a payment
+      let firstCommittedUTxO = Prelude.head $ UTxO.pairs committedUTxOByAlice
+      let Right tx =
+            mkSimpleTx
+              firstCommittedUTxO
+              (inHeadAddress bobCardanoVk, lovelaceToValue paymentFromAliceToBob)
+              aliceCardanoSk
+      send n1 $ input "NewTx" ["transaction" .= tx]
+      waitFor tracer 20 [n1, n2, n3] $
+        output "TxSeen" ["transaction" .= tx]
 
-          let expectedSnapshot =
-                object
-                  [ "snapshotNumber" .= int 1
-                  , "utxo" .= newUTxO
-                  , "confirmedTransactions" .= [tx]
-                  ]
+      -- The expected new utxo set is the created payment to bob,
+      -- alice's remaining utxo in head and whatever bot has
+      -- committed to the head
+      let newUTxO =
+            Map.fromList
+              [
+                ( TxIn (txId tx) (toEnum 0)
+                , object
+                    [ "address" .= String (serialiseAddress $ inHeadAddress bobCardanoVk)
+                    , "value" .= object ["lovelace" .= int paymentFromAliceToBob]
+                    ]
+                )
+              ,
+                ( TxIn (txId tx) (toEnum 1)
+                , object
+                    [ "address" .= String (serialiseAddress $ inHeadAddress aliceCardanoVk)
+                    , "value" .= object ["lovelace" .= int (aliceCommittedToHead - paymentFromAliceToBob)]
+                    ]
+                )
+              ]
+              <> fmap toJSON (Map.fromList (UTxO.pairs committedUTxOByBob))
 
-          waitMatch 20 n1 $ \v -> do
-            guard $ v ^? key "tag" == Just "SnapshotConfirmed"
-            snapshot <- v ^? key "snapshot"
-            guard $ snapshot == expectedSnapshot
+      let expectedSnapshot =
+            object
+              [ "snapshotNumber" .= int 1
+              , "utxo" .= newUTxO
+              , "confirmedTransactions" .= [tx]
+              ]
 
-          send n1 $ input "GetUTxO" []
-          waitFor tracer 20 [n1] $ output "UTxO" ["utxo" .= newUTxO]
+      waitMatch 20 n1 $ \v -> do
+        guard $ v ^? key "tag" == Just "SnapshotConfirmed"
+        snapshot <- v ^? key "snapshot"
+        guard $ snapshot == expectedSnapshot
 
-          send n1 $ input "Close" []
-          waitMatch 3 n1 $ \v -> do
-            guard $ v ^? key "tag" == Just "HeadIsClosed"
-            snapshot <- v ^? key "latestSnapshot"
-            guard $ snapshot == expectedSnapshot
+      send n1 $ input "GetUTxO" []
+      waitFor tracer 20 [n1] $ output "UTxO" ["utxo" .= newUTxO]
 
-          waitFor tracer (contestationPeriod + 3) [n1] $
-            output "HeadIsFinalized" ["utxo" .= newUTxO]
+      send n1 $ input "Close" []
+      waitMatch 3 n1 $ \v -> do
+        guard $ v ^? key "tag" == Just "HeadIsClosed"
+        snapshot <- v ^? key "latestSnapshot"
+        guard $ snapshot == expectedSnapshot
 
-          case fromJSON $ toJSON newUTxO of
-            Error err ->
-              failure $ "newUTxO isn't valid JSON?: " <> err
-            Success u ->
-              failAfter 5 $ waitForUTxO defaultNetworkId nodeSocket u
+      waitFor tracer (contestationPeriod + 3) [n1] $
+        output "HeadIsFinalized" ["utxo" .= newUTxO]
+
+      case fromJSON $ toJSON newUTxO of
+        Error err ->
+          failure $ "newUTxO isn't valid JSON?: " <> err
+        Success u ->
+          failAfter 5 $ waitForUTxO defaultNetworkId nodeSocket u
 
 --
 -- Fixtures
