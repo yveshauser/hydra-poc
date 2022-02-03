@@ -9,12 +9,13 @@ import Hydra.Prelude
 import qualified Cardano.Api.UTxO as UTxO
 import Cardano.Ledger.Keys (VKey (VKey))
 import CardanoClient (
+  CardanoClientException,
   build,
   buildAddress,
   queryUTxO,
   sign,
   submit,
-  waitForTransaction,
+  waitForPayment,
  )
 import CardanoNode (
   CardanoNodeArgs (..),
@@ -53,7 +54,7 @@ import Hydra.Cardano.Api (
   txOutLovelace,
  )
 import qualified Hydra.Cardano.Api as Api
-import Hydra.Chain.Direct.Util (markerDatumHash)
+import Hydra.Chain.Direct.Util (markerDatumHash, retry)
 import qualified Hydra.Chain.Direct.Util as Cardano
 import qualified Paths_hydra_cluster as Pkg
 import System.Directory (createDirectoryIfMissing, doesFileExist)
@@ -263,7 +264,7 @@ seedFromFaucet networkId (RunningNode _ nodeSocket) receivingVerificationKey lov
   build networkId nodeSocket changeAddress [(i, Nothing)] [] [theOutput] >>= \case
     Left e -> error (show e)
     Right body -> do
-      submit networkId nodeSocket $ sign faucetSk body
+      retry isCardanoClientException $ submit networkId nodeSocket (sign faucetSk body)
       waitForPayment networkId nodeSocket lovelace receivingAddress
  where
   findUtxo faucetVk = do
@@ -285,6 +286,9 @@ seedFromFaucet networkId (RunningNode _ nodeSocket) receivingVerificationKey lov
   theOutputDatum = case marked of
     Marked -> Api.TxOutDatumHash markerDatumHash
     Normal -> Api.TxOutDatumNone
+
+  isCardanoClientException :: CardanoClientException -> Bool
+  isCardanoClientException = const True
 
 -- | Initialize the system start time to now (modulo a small offset needed to
 -- give time to the system to bootstrap correctly).
