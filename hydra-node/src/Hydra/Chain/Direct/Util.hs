@@ -174,7 +174,13 @@ retry predicate action =
 markerDatum :: Data
 markerDatum = toData $ toBuiltinData ("Hydra Head Payment" :: BuiltinByteString)
 
+-- | Hash of the markerDatum
+markerDatumHash :: Hash ScriptData
+markerDatumHash =
+  hashScriptData $ Shelley.fromPlutusData markerDatum
+
+-- | Determine whether a 'TxOut' is marked to be used for paying Hydra Head transactions
 isMarkedOutput :: TxOut CtxUTxO era -> Bool
 isMarkedOutput = \case
-  (TxOut _ _ (TxOutDatumHash _ ha)) -> ha == hashScriptData (Shelley.fromPlutusData markerDatum)
+  (TxOut _ _ (TxOutDatumHash _ ha)) -> ha == markerDatumHash
   _ -> False

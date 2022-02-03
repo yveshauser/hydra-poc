@@ -14,6 +14,7 @@ import Cardano.Api (
   PaymentKey,
   SigningKey,
   TextEnvelopeError (TextEnvelopeAesonDecodeError),
+  TxOutDatum (TxOutDatumHash),
   VerificationKey,
   deserialiseFromTextEnvelope,
   getVerificationKey,
@@ -21,7 +22,7 @@ import Cardano.Api (
  )
 import Cardano.Api.Shelley (VerificationKey (PaymentVerificationKey))
 import Cardano.Ledger.Keys (VKey (VKey))
-import CardanoClient (build, buildAddress, markerDatumHash, queryUtxo, sign, submit, txOutLovelace, waitForPayment)
+import CardanoClient (build, buildAddress, queryUtxo, sign, submit, txOutLovelace, waitForPayment)
 import CardanoNode (
   CardanoNodeArgs (..),
   CardanoNodeConfig (..),
@@ -41,8 +42,9 @@ import qualified Data.Aeson as Aeson
 import Data.Aeson.Lens (key)
 import qualified Data.ByteString as BS
 import Data.ByteString.Base16 (encodeBase16)
+import Hydra.Chain.Direct.Util (markerDatumHash)
 import qualified Hydra.Chain.Direct.Util as Cardano
-import Hydra.Ledger.Cardano (TxOut (TxOut), fromCardanoApiUtxo, lovelaceToTxOutValue, shelleyAddressInEra, utxoPairs)
+import Hydra.Ledger.Cardano (ScriptDataSupportedInEra (ScriptDataInAlonzoEra), TxOut (TxOut), TxOutDatum (TxOutDatumNone), Utxo, fromCardanoApiUtxo, lovelaceToTxOutValue, shelleyAddressInEra, utxoPairs)
 import qualified Paths_hydra_cluster as Pkg
 import System.Directory (createDirectoryIfMissing, doesFileExist)
 import System.FilePath ((<.>), (</>))
@@ -227,6 +229,8 @@ withBFTNode clusterTracer cfg initialFunds action = do
       threadDelay 0.1
       waitForSocket node
 
+data Marked = Marked | Normal
+
 -- | Create a specially marked "seed" UTXO containing requested 'Lovelace' by
 -- redeeming funds available to the well-known faucet.
 --
@@ -237,9 +241,12 @@ seedFromFaucet ::
   RunningNode ->
   -- | Recipient of the funds
   VerificationKey PaymentKey ->
+  -- | Amount to get from faucet
   Lovelace ->
-  IO ()
-seedFromFaucet networkId (RunningNode _ nodeSocket) receivingVerificationKey lovelace = do
+  -- | Marked or normal output?
+  Marked ->
+  IO Utxo
+seedFromFaucet networkId (RunningNode _ nodeSocket) receivingVerificationKey lovelace marked = do
   (faucetVk, faucetSk) <- keysFor Faucet
   (i, _o) <- findUtxo faucetVk
   let changeAddress = buildAddress faucetVk networkId
@@ -247,7 +254,7 @@ seedFromFaucet networkId (RunningNode _ nodeSocket) receivingVerificationKey lov
     Left e -> error (show e)
     Right body -> do
       submit networkId nodeSocket $ sign faucetSk body
-      void $ waitForPayment networkId nodeSocket lovelace receivingAddress
+      fromCardanoApiUtxo <$> waitForPayment networkId nodeSocket lovelace receivingAddress
  where
   findUtxo faucetVk = do
     faucetUtxo <- fromCardanoApiUtxo <$> queryUtxo networkId nodeSocket [buildAddress faucetVk networkId]
@@ -263,7 +270,11 @@ seedFromFaucet networkId (RunningNode _ nodeSocket) receivingVerificationKey lov
     TxOut
       (shelleyAddressInEra receivingAddress)
       (lovelaceToTxOutValue lovelace)
-      markerDatumHash
+      theOutputDatum
+
+  theOutputDatum = case marked of
+    Marked -> TxOutDatumHash ScriptDataInAlonzoEra markerDatumHash
+    Normal -> TxOutDatumNone
 
 -- | Initialize the system start time to now (modulo a small offset needed to
 -- give time to the system to bootstrap correctly).

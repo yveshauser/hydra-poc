@@ -1,3 +1,5 @@
+{-# OPTIONS_GHC -Wno-deferred-out-of-scope-variables #-}
+
 -- | A basic cardano-node client that can talk to a local cardano-node.
 --
 -- The idea of this module is to provide a Haskell interface on top of cardano-cli's API,
@@ -24,7 +26,6 @@ import Hydra.Ledger.Cardano (
   Utxo,
   Utxo' (Utxo),
   fromCardanoApiUtxo,
-  fromPlutusData,
   lovelaceToTxOutValue,
   mkVkAddress,
   unsafeCastHash,
@@ -353,10 +354,6 @@ waitForTransaction networkId socket tx = go
       then go
       else pure utxo
 
-markerDatumHash :: TxOutDatum ctx AlonzoEra
-markerDatumHash =
-  TxOutDatumHash ScriptDataInAlonzoEra (hashScriptData $ fromPlutusData Hydra.markerDatum)
-
 mkGenesisTx ::
   NetworkId ->
   ProtocolParameters ->
@@ -385,7 +382,7 @@ mkGenesisTx networkId pparams initialAmount signingKey verificationKey amount =
         TxOut
           changeAddr
           (lovelaceToTxOutValue $ initialAmount - amount - fee)
-          markerDatumHash
+          (TxOutDatumHash ScriptDataInAlonzoEra Hydra.markerDatumHash)
 
       recipientAddr = mkVkAddress networkId verificationKey
       recipientOutput =
