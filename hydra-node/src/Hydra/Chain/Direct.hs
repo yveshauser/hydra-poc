@@ -149,37 +149,37 @@ withDirectChain ::
 withDirectChain tracer networkMagic iocp socketPath keyPair party cardanoKeys callback action = do
   queue <- newTQueueIO
   headState <- newTVarIO None
-  handle onIOException $
-    withTinyWallet (contramap Wallet tracer) networkMagic keyPair iocp socketPath $ \wallet ->
-      race_
-        ( do
-            -- FIXME: There's currently a race-condition with the actual client
-            -- which will only see transactions after it has established
-            -- connection with the server's tip. So any transaction submitted
-            -- before that tip will be missed.
-            --
-            -- The way we handle rollbacks is also wrong because it'll
-            -- fast-forward to the tip, and not allow recovering intermediate
-            -- history.
-            threadDelay 2
-            action $
-              Chain
-                { postTx = \tx -> do
-                    traceWith tracer $ ToPost tx
-                    -- XXX(SN): 'finalizeTx' retries until a payment utxo is
-                    -- found. See haddock for details
-                    timeoutThrowAfter (NoPaymentInput @Tx) 10 $
-                      fromPostChainTx wallet (Testnet networkMagic) headState cardanoKeys tx
-                        >>= finalizeTx wallet headState . toLedgerTx
-                        >>= writeTQueue queue
-                }
-        )
-        ( connectTo
+  withTinyWallet (contramap Wallet tracer) networkMagic keyPair iocp socketPath $ \wallet ->
+    race_
+      ( do
+          -- FIXME: There's currently a race-condition with the actual client
+          -- which will only see transactions after it has established
+          -- connection with the server's tip. So any transaction submitted
+          -- before that tip will be missed.
+          --
+          -- The way we handle rollbacks is also wrong because it'll
+          -- fast-forward to the tip, and not allow recovering intermediate
+          -- history.
+          threadDelay 2
+          action $
+            Chain
+              { postTx = \tx -> do
+                  traceWith tracer $ ToPost tx
+                  -- XXX(SN): 'finalizeTx' retries until a payment utxo is
+                  -- found. See haddock for details
+                  timeoutThrowAfter (NoPaymentInput @Tx) 10 $
+                    fromPostChainTx wallet (Testnet networkMagic) headState cardanoKeys tx
+                      >>= finalizeTx wallet headState . toLedgerTx
+                      >>= writeTQueue queue
+              }
+      )
+      ( handle onIOException $
+          connectTo
             (localSnocket iocp)
             nullConnectTracers
             (versions networkMagic (client tracer networkMagic queue party headState callback))
             socketPath
-        )
+      )
  where
   timeoutThrowAfter ex s stm = do
     timeout s (atomically stm) >>= \case

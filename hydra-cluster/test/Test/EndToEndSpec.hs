@@ -71,6 +71,91 @@ import qualified Prelude
 allNodeIds :: [Int]
 allNodeIds = [1 .. 3]
 
+spec :: Spec
+spec = around showLogsOnFailure $
+  describe "End-to-end test using a single cardano-node" $ do
+    describe "three hydra nodes scenario" $
+      it "inits a Head, processes a single Cardano transaction and closes it again" $ \tracer ->
+        failAfter 60 $
+          withTempDir "end-to-end-cardano-node" $ \tmpDir -> do
+            config <- newNodeConfig tmpDir
+            (faucetVk, _) <- keysFor Faucet
+            withBFTNode (contramap FromCluster tracer) config [faucetVk] $ \node -> do
+              initAndClose tracer node
+
+    describe "two hydra heads scenario" $ do
+      it "two heads on the same network do not conflict" $ \tracer ->
+        failAfter 60 $
+          withTempDir "end-to-end-cardano-node" $ \tmpDir -> do
+            config <- newNodeConfig tmpDir
+            (faucetVk, _) <- keysFor Faucet
+            withBFTNode (contramap FromCluster tracer) config [faucetVk] $ \node -> do
+              concurrently_
+                (initAndClose tracer node)
+                (initAndClose tracer node)
+
+      it "bob cannot abort alice's head" $ \tracer ->
+        failAfter 60 $
+          withTempDir "end-to-end-two-heads" $ \tmpDir -> do
+            config <- newNodeConfig tmpDir
+            (aliceCardanoVk, aliceCardanoSk) <- keysFor Alice
+            (bobCardanoVk, bobCardanoSk) <- keysFor Bob
+            withBFTNode (contramap FromCluster tracer) config [aliceCardanoVk, bobCardanoVk] $ \(RunningNode _ nodeSocket) -> do
+              (aliceVkPath, aliceSkPath) <- writeKeysFor tmpDir Alice
+              (_, bobSkPath) <- writeKeysFor tmpDir Bob
+              pparams <- queryProtocolParameters defaultNetworkId nodeSocket
+              withHydraNode tracer aliceSkPath [] tmpDir nodeSocket 1 aliceSk [] allNodeIds $ \n1 ->
+                withHydraNode tracer bobSkPath [aliceVkPath] tmpDir nodeSocket 2 bobSk [aliceVk] allNodeIds $ \n2 -> do
+                  postSeedPayment defaultNetworkId pparams availableInitialFunds nodeSocket aliceCardanoSk 100_000_000
+                  postSeedPayment defaultNetworkId pparams availableInitialFunds nodeSocket bobCardanoSk 100_000_000
+
+                  let contestationPeriod = 10 :: Natural
+                  send n1 $ input "Init" ["contestationPeriod" .= contestationPeriod]
+                  waitFor tracer 10 [n1] $
+                    output "ReadyToCommit" ["parties" .= Set.fromList [alice]]
+
+                  -- Bob opens and immediately aborts a Head with Alice, iow pulls Alice in
+                  -- "his" Head
+                  send n2 $ input "Init" ["contestationPeriod" .= contestationPeriod]
+                  waitFor tracer 10 [n2] $
+                    output "ReadyToCommit" ["parties" .= Set.fromList [alice, bob]]
+
+                  send n2 $ input "Abort" []
+                  waitFor tracer 10 [n2] $
+                    output "HeadIsAborted" ["utxo" .= Object mempty]
+
+                  -- Alice should be able to continue working with her Head
+                  send n1 $ input "Commit" ["utxo" .= Object mempty]
+                  waitFor tracer 10 [n1] $
+                    output "HeadIsOpen" ["utxo" .= Object mempty]
+
+    describe "Monitoring" $
+      it "Node exposes Prometheus metrics on port 6001" $ \tracer ->
+        withTempDir "end-to-end-prometheus-metrics" $ \tmpDir -> do
+          config <- newNodeConfig tmpDir
+          (aliceCardanoVk, aliceCardanoSk) <- keysFor Alice
+          withBFTNode (contramap FromCluster tracer) config [aliceCardanoVk] $ \(RunningNode _ nodeSocket) -> do
+            (aliceVkPath, aliceSkPath) <- writeKeysFor tmpDir Alice
+            (bobVkPath, bobSkPath) <- writeKeysFor tmpDir Bob
+            (carolVkPath, carolSkPath) <- writeKeysFor tmpDir Carol
+            pparams <- queryProtocolParameters defaultNetworkId nodeSocket
+            failAfter 20 $
+              withHydraNode tracer aliceSkPath [bobVkPath, carolVkPath] tmpDir nodeSocket 1 aliceSk [bobVk, carolVk] allNodeIds $ \n1 ->
+                withHydraNode tracer bobSkPath [aliceVkPath, carolVkPath] tmpDir nodeSocket 2 bobSk [aliceVk, carolVk] allNodeIds $ \_ ->
+                  withHydraNode tracer carolSkPath [aliceVkPath, bobVkPath] tmpDir nodeSocket 3 carolSk [aliceVk, bobVk] allNodeIds $ \_ -> do
+                    postSeedPayment defaultNetworkId pparams availableInitialFunds nodeSocket aliceCardanoSk 100_000_000
+                    waitForNodesConnected tracer allNodeIds [n1]
+                    send n1 $ input "Init" ["contestationPeriod" .= int 10]
+                    waitFor tracer 3 [n1] $ output "ReadyToCommit" ["parties" .= Set.fromList [alice, bob, carol]]
+                    metrics <- getMetrics n1
+                    metrics `shouldSatisfy` ("hydra_head_events  4" `BS.isInfixOf`)
+
+    describe "hydra-node executable" $
+      it "display proper semantic version given it is passed --version argument" $ \_ ->
+        failAfter 5 $ do
+          version <- readCreateProcess (hydraNodeProcess ["--version"]) ""
+          version `shouldSatisfy` (=~ ("[0-9]+\\.[0-9]+\\.[0-9]+(-[a-zA-Z0-9]+)?" :: String))
+
 initAndClose :: Tracer IO EndToEndLog -> RunningNode -> IO ()
 initAndClose tracer node@(RunningNode _ nodeSocket) = do
   withTempDir "end-to-end-init-and-close" $ \tmpDir -> do
@@ -166,91 +251,6 @@ initAndClose tracer node@(RunningNode _ nodeSocket) = do
               failure $ "newUTxO isn't valid JSON?: " <> err
             Success u ->
               failAfter 5 $ waitForUTxO defaultNetworkId nodeSocket u
-
-spec :: Spec
-spec = around showLogsOnFailure $
-  describe "End-to-end test using a single cardano-node" $ do
-    describe "three hydra nodes scenario" $
-      it "inits a Head, processes a single Cardano transaction and closes it again" $ \tracer ->
-        failAfter 60 $
-          withTempDir "end-to-end-cardano-node" $ \tmpDir -> do
-            config <- newNodeConfig tmpDir
-            (faucetVk, _) <- keysFor Faucet
-            withBFTNode (contramap FromCluster tracer) config [faucetVk] $ \node -> do
-              initAndClose tracer node
-
-    describe "two hydra heads scenario" $ do
-      it "two heads on the same network do not conflict" $ \tracer ->
-        failAfter 60 $
-          withTempDir "end-to-end-cardano-node" $ \tmpDir -> do
-            config <- newNodeConfig tmpDir
-            (faucetVk, _) <- keysFor Faucet
-            withBFTNode (contramap FromCluster tracer) config [faucetVk] $ \node -> do
-              concurrently_
-                (initAndClose tracer node)
-                (initAndClose tracer node)
-
-      it "bob cannot abort alice's head" $ \tracer ->
-        failAfter 60 $
-          withTempDir "end-to-end-two-heads" $ \tmpDir -> do
-            config <- newNodeConfig tmpDir
-            (aliceCardanoVk, aliceCardanoSk) <- keysFor Alice
-            (bobCardanoVk, bobCardanoSk) <- keysFor Bob
-            withBFTNode (contramap FromCluster tracer) config [aliceCardanoVk, bobCardanoVk] $ \(RunningNode _ nodeSocket) -> do
-              (aliceVkPath, aliceSkPath) <- writeKeysFor tmpDir Alice
-              (_, bobSkPath) <- writeKeysFor tmpDir Bob
-              pparams <- queryProtocolParameters defaultNetworkId nodeSocket
-              withHydraNode tracer aliceSkPath [] tmpDir nodeSocket 1 aliceSk [] allNodeIds $ \n1 ->
-                withHydraNode tracer bobSkPath [aliceVkPath] tmpDir nodeSocket 2 bobSk [aliceVk] allNodeIds $ \n2 -> do
-                  postSeedPayment defaultNetworkId pparams availableInitialFunds nodeSocket aliceCardanoSk 100_000_000
-                  postSeedPayment defaultNetworkId pparams availableInitialFunds nodeSocket bobCardanoSk 100_000_000
-
-                  let contestationPeriod = 10 :: Natural
-                  send n1 $ input "Init" ["contestationPeriod" .= contestationPeriod]
-                  waitFor tracer 10 [n1] $
-                    output "ReadyToCommit" ["parties" .= Set.fromList [alice]]
-
-                  -- Bob opens and immediately aborts a Head with Alice, iow pulls Alice in
-                  -- "his" Head
-                  send n2 $ input "Init" ["contestationPeriod" .= contestationPeriod]
-                  waitFor tracer 10 [n2] $
-                    output "ReadyToCommit" ["parties" .= Set.fromList [alice, bob]]
-
-                  send n2 $ input "Abort" []
-                  waitFor tracer 10 [n2] $
-                    output "HeadIsAborted" ["utxo" .= Object mempty]
-
-                  -- Alice should be able to continue working with her Head
-                  send n1 $ input "Commit" ["utxo" .= Object mempty]
-                  waitFor tracer 10 [n1] $
-                    output "HeadIsOpen" ["utxo" .= Object mempty]
-
-    describe "Monitoring" $
-      it "Node exposes Prometheus metrics on port 6001" $ \tracer ->
-        withTempDir "end-to-end-prometheus-metrics" $ \tmpDir -> do
-          config <- newNodeConfig tmpDir
-          (aliceCardanoVk, aliceCardanoSk) <- keysFor Alice
-          withBFTNode (contramap FromCluster tracer) config [aliceCardanoVk] $ \(RunningNode _ nodeSocket) -> do
-            (aliceVkPath, aliceSkPath) <- writeKeysFor tmpDir Alice
-            (bobVkPath, bobSkPath) <- writeKeysFor tmpDir Bob
-            (carolVkPath, carolSkPath) <- writeKeysFor tmpDir Carol
-            pparams <- queryProtocolParameters defaultNetworkId nodeSocket
-            failAfter 20 $
-              withHydraNode tracer aliceSkPath [bobVkPath, carolVkPath] tmpDir nodeSocket 1 aliceSk [bobVk, carolVk] allNodeIds $ \n1 ->
-                withHydraNode tracer bobSkPath [aliceVkPath, carolVkPath] tmpDir nodeSocket 2 bobSk [aliceVk, carolVk] allNodeIds $ \_ ->
-                  withHydraNode tracer carolSkPath [aliceVkPath, bobVkPath] tmpDir nodeSocket 3 carolSk [aliceVk, bobVk] allNodeIds $ \_ -> do
-                    postSeedPayment defaultNetworkId pparams availableInitialFunds nodeSocket aliceCardanoSk 100_000_000
-                    waitForNodesConnected tracer allNodeIds [n1]
-                    send n1 $ input "Init" ["contestationPeriod" .= int 10]
-                    waitFor tracer 3 [n1] $ output "ReadyToCommit" ["parties" .= Set.fromList [alice, bob, carol]]
-                    metrics <- getMetrics n1
-                    metrics `shouldSatisfy` ("hydra_head_events  4" `BS.isInfixOf`)
-
-    describe "hydra-node executable" $
-      it "display proper semantic version given it is passed --version argument" $ \_ ->
-        failAfter 5 $ do
-          version <- readCreateProcess (hydraNodeProcess ["--version"]) ""
-          version `shouldSatisfy` (=~ ("[0-9]+\\.[0-9]+\\.[0-9]+(-[a-zA-Z0-9]+)?" :: String))
 
 --
 -- Fixtures
