@@ -8,11 +8,13 @@ import Hydra.Prelude
 
 import Cardano.Api (
   AsType (..),
+  Lovelace,
   NetworkId (Testnet),
   NetworkMagic (NetworkMagic),
   PaymentKey,
   SigningKey,
   TextEnvelopeError (TextEnvelopeAesonDecodeError),
+  UTxO (UTxO),
   VerificationKey,
   deserialiseFromTextEnvelope,
   getVerificationKey,
@@ -20,7 +22,7 @@ import Cardano.Api (
  )
 import Cardano.Api.Shelley (VerificationKey (PaymentVerificationKey))
 import Cardano.Ledger.Keys (VKey (VKey))
-import CardanoClient (buildAddress)
+import CardanoClient (buildAddress, queryUtxo)
 import CardanoNode (
   CardanoNodeArgs (..),
   CardanoNodeConfig (..),
@@ -224,6 +226,20 @@ withBFTNode clusterTracer cfg initialFunds action = do
     unlessM (doesFileExist socket) $ do
       threadDelay 0.1
       waitForSocket node
+
+-- | Create a specially marked "seed" UTXO containing requested 'Lovelace' by
+-- redeeming funds available to the well-known faucet.
+seedFromFaucet ::
+  NetworkId ->
+  RunningNode ->
+  -- | Recipient of the funds
+  VerificationKey PaymentKey ->
+  Lovelace ->
+  IO ()
+seedFromFaucet networkId (RunningNode _ nodeSocket) _receivingVerificationKey _lovelace = do
+  (faucetVk, _) <- keysFor Faucet
+  UTxO faucetUtxo <- queryUtxo networkId nodeSocket [buildAddress faucetVk networkId]
+  print faucetUtxo
 
 -- | Initialize the system start time to now (modulo a small offset needed to
 -- give time to the system to bootstrap correctly).
