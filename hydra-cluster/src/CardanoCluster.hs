@@ -22,7 +22,7 @@ import Cardano.Api (
  )
 import Cardano.Api.Shelley (VerificationKey (PaymentVerificationKey))
 import Cardano.Ledger.Keys (VKey (VKey))
-import CardanoClient (build, buildAddress, queryUtxo, sign, submit, txOutLovelace, waitForPayment)
+import CardanoClient (build, buildAddress, queryUtxo, sign, submit, txOutLovelace, waitForTransaction)
 import CardanoNode (
   CardanoNodeArgs (..),
   CardanoNodeConfig (..),
@@ -253,8 +253,9 @@ seedFromFaucet networkId (RunningNode _ nodeSocket) receivingVerificationKey lov
   build networkId nodeSocket changeAddress [(i, Nothing)] [] [theOutput] >>= \case
     Left e -> error (show e)
     Right body -> do
-      submit networkId nodeSocket $ sign faucetSk body
-      fromCardanoApiUtxo <$> waitForPayment networkId nodeSocket lovelace receivingAddress
+      let tx = sign faucetSk body
+      submit networkId nodeSocket tx
+      waitForTransaction networkId nodeSocket tx
  where
   findUtxo faucetVk = do
     faucetUtxo <- fromCardanoApiUtxo <$> queryUtxo networkId nodeSocket [buildAddress faucetVk networkId]

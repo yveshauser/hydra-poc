@@ -24,7 +24,6 @@ import qualified Hydra.Chain.Direct.Util as Hydra
 import Hydra.Ledger.Cardano (
   CardanoTx,
   Utxo,
-  Utxo' (Utxo),
   fromCardanoApiUtxo,
   lovelaceToTxOutValue,
   mkVkAddress,
@@ -306,8 +305,9 @@ waitForPayment ::
   FilePath ->
   Lovelace ->
   Address ShelleyAddr ->
-  IO (UTxO AlonzoEra)
-waitForPayment networkId socket amount addr = go
+  IO Utxo
+waitForPayment networkId socket amount addr =
+  fromCardanoApiUtxo <$> go
  where
   go = do
     utxo <- queryUtxo networkId socket [addr]
@@ -339,13 +339,13 @@ waitForUtxo networkId nodeSocket utxo =
     txOut ->
       error $ "Unexpected TxOut " <> show txOut
 
--- TODO: This should return a 'Utxo' (from Hydra.Ledger.Cardano)
 waitForTransaction ::
   NetworkId ->
   FilePath ->
   CardanoTx ->
-  IO (UTxO AlonzoEra)
-waitForTransaction networkId socket tx = go
+  IO Utxo
+waitForTransaction networkId socket tx =
+  fromCardanoApiUtxo <$> go
  where
   txIns = Map.keys (utxoMap $ utxoFromTx tx)
   go = do
@@ -394,6 +394,7 @@ mkGenesisTx networkId pparams initialAmount signingKey verificationKey amount =
         Left err -> error $ "Fail to build genesis transations: " <> show err
         Right tx -> sign signingKey tx
 
+-- TODO: replace with 'seedFromFaucet'
 generatePaymentToCommit ::
   HasCallStack =>
   NetworkId ->
@@ -410,7 +411,7 @@ generatePaymentToCommit networkId (RunningNode _ nodeSocket) spendingSigningKey 
     Right body -> do
       let tx = sign spendingSigningKey body
       submit networkId nodeSocket tx
-      convertUtxo <$> waitForPayment networkId nodeSocket lovelace receivingAddress
+      waitForPayment networkId nodeSocket lovelace receivingAddress
  where
   spendingAddress = buildAddress (getVerificationKey spendingSigningKey) networkId
 
@@ -422,8 +423,7 @@ generatePaymentToCommit networkId (RunningNode _ nodeSocket) spendingSigningKey 
       (lovelaceToTxOutValue lovelace)
       TxOutDatumNone
 
-  convertUtxo (UTxO ledgerUtxo) = Utxo ledgerUtxo
-
+-- TODO: replace usages with 'seedFromFaucet'
 postSeedPayment :: NetworkId -> ProtocolParameters -> Lovelace -> FilePath -> SigningKey PaymentKey -> Lovelace -> IO ()
 postSeedPayment networkId pparams initialAmount nodeSocket signingKey amountLovelace = do
   let genesisTx = mkGenesisTx networkId pparams initialAmount signingKey verificationKey amountLovelace
