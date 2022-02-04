@@ -71,6 +71,7 @@ import Hydra.Chain.Direct.Tx (
   observeCommit,
   observeFanoutTx,
   observeInitTx,
+  observeTx,
   ownInitial,
  )
 import Hydra.Chain.Direct.Util (
@@ -328,7 +329,7 @@ chainSyncClient tracer networkMagic callback party headState =
     let utxo = UTxO (getKnownUTxO onChainHeadState)
     -- TODO(SN): We should be only looking for abort,commit etc. when we have a headId/policyId
     let res =
-          observeInitTx networkId party tx
+          observeTx networkId party onChainHeadState tx
             <|> observeCommit networkId tx onChainHeadState
             <|> observeCollectComTx utxo tx
             <|> observeCloseTx utxo tx
