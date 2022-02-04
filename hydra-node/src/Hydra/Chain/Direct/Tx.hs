@@ -630,6 +630,13 @@ observeAbortTx utxo tx = do
 
 -- * Functions related to OnChainHeadState
 
+data HeadId = HeadId
+
+data WithHeadId a = WithHeadId HeadId a
+
+getHeadId :: OnChainHeadState -> Maybe HeadId
+getHeadId = undefined
+
 -- | Provide a UTXO map for given OnChainHeadState. Used by the TinyWallet and
 -- the direct chain component to lookup inputs for balancing / constructing txs.
 -- XXX(SN): This is a hint that we might want to track the UTxO directly?
