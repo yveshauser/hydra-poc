@@ -381,6 +381,9 @@ abortTx networkId (headInput, ScriptDatumForTxIn -> headDatumBefore) initialsToA
 
 -- * Observe Hydra Head transactions
 
+observeTx :: NetworkId -> Party -> OnChainHeadState -> CardanoTx -> Maybe (OnChainTx CardanoTx, OnChainHeadState)
+observeTx = undefined
+
 -- XXX(SN): We should log decisions why a tx is not an initTx etc. instead of
 -- only returning a Maybe, i.e. 'Either Reason (OnChainTx tx, OnChainHeadState)'
 observeInitTx ::

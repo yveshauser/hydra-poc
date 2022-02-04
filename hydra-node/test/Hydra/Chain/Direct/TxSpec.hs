@@ -74,7 +74,7 @@ spec =
       prop "is observed" $ \txIn cperiod (party :| parties) cardanoKeys ->
         let params = HeadParameters cperiod (party : parties)
             tx = initTx testNetworkId cardanoKeys params txIn
-            observed = observeInitTx testNetworkId party tx
+            observed = observeTx testNetworkId party None tx
          in case observed of
               Just (octx, _) -> octx === OnInitTx @Tx cperiod (party : parties)
               _ -> property False
@@ -84,7 +84,7 @@ spec =
         forAll (elements parties) $ \notInvited ->
           let invited = nub parties \\ [notInvited]
               tx = initTx testNetworkId cardanoKeys (HeadParameters cperiod invited) txIn
-           in isNothing (observeInitTx testNetworkId notInvited tx)
+           in isNothing (observeTx testNetworkId notInvited None tx)
                 & counterexample ("observing as: " <> show notInvited)
                 & counterexample ("invited: " <> show invited)
 
@@ -93,7 +93,7 @@ spec =
             parties = fst <$> me : others
             cardanoKeys = snd <$> me : others
             tx = initTx testNetworkId cardanoKeys params txIn
-            res = observeInitTx testNetworkId (fst me) tx
+            res = observeTx testNetworkId (fst me) None tx
          in case res of
               Just (OnInitTx cp ps, Initial{initials}) ->
                 cp === cperiod
@@ -379,7 +379,7 @@ spec =
         withMaxSuccess 60 $ \txIn cperiod (party :| parties) cardanoKeys walletUTxO ->
           let params = HeadParameters cperiod (party : parties)
               tx = initTx testNetworkId cardanoKeys params txIn
-           in case observeInitTx testNetworkId party tx of
+           in case observeTx testNetworkId party None tx of
                 Just (_, Initial{initials, threadOutput}) -> do
                   let (headInput, headOutput, headDatum, _) = threadOutput
                       initials' = Map.fromList [(a, c) | (a, _, c) <- initials]
