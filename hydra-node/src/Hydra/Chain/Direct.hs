@@ -70,7 +70,6 @@ import Hydra.Chain.Direct.Tx (
   observeCollectComTx,
   observeCommit,
   observeFanoutTx,
-  observeInitTx,
   observeTx,
   ownInitial,
  )
