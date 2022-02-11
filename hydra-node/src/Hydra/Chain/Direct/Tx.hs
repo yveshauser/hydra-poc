@@ -381,7 +381,7 @@ abortTx networkId (headInput, ScriptDatumForTxIn -> headDatumBefore) initialsToA
 
 -- * Observe Hydra Head transactions
 
-observeTx :: NetworkId -> Party -> OnChainHeadState -> CardanoTx -> Maybe (OnChainTx CardanoTx, OnChainHeadState)
+observeTx :: NetworkId -> Party -> OnChainHeadState -> Tx -> Maybe (OnChainTx Tx, OnChainHeadState)
 observeTx networkId party _ = observeInitTx networkId party
 
 -- XXX(SN): We should log decisions why a tx is not an initTx etc. instead of
