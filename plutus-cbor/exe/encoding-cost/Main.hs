@@ -43,13 +43,16 @@ main = do
         ]
 
   putTextLn ""
-  putTextLn "Single multi-asset TxOut, by asset number."
+  putTextLn "Single multi-asset TxOut, by asset number: n, absolute memory, absolute cpu, relative memory, relative cpu"
   forM_ [1 .. 50] $ \n -> do
     let x = generateWith (genTxOut n) 42
     let (mem, cpu) = relativeCostOf x defaultMaxExecutionUnits encodeTxOutValidator
+    let ExUnits absMem absCpu = evaluateScriptExecutionUnits (encodeTxOutValidator RealValidator) x
     putTextLn @IO $
       unwords
         [ padLeft ' ' 2 (show n)
+        , show absMem
+        , show absCpu
         , rationalToPercent mem
         , rationalToPercent cpu
         ]
