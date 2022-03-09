@@ -61,8 +61,14 @@ import Test.QuickCheck (
   resize, expectFailure
  )
 import Type.Reflection (typeOf)
+<<<<<<< HEAD
 import qualified Data.Map as Map
 import Hydra.Ledger.Cardano.Evaluate (evaluateTx')
+||||||| parent of 0ea698ba (Try to create a propIsValid in StateSpec)
+=======
+import qualified Data.Map as Map
+import Hydra.Ledger.Cardano.Evaluate (evaluateTx)
+>>>>>>> 0ea698ba (Try to create a propIsValid in StateSpec)
 
 spec :: Spec
 spec = parallel $ do
@@ -119,6 +125,7 @@ spec = parallel $ do
 
   describe "fanout" $ do
     propBelowSizeLimit maxTxSize forAllFanout
+<<<<<<< HEAD
     -- TODO: look into why this is failing
     propIsValid maxTxExecutionUnits (expectFailure . forAllFanout)
 
@@ -128,6 +135,10 @@ tenTimesTxExecutionUnits =
     { executionMemory = 100_000_000
     , executionSteps = 100_000_000_000
     }
+||||||| parent of 0ea698ba (Try to create a propIsValid in StateSpec)
+=======
+    propIsValid forAllFanout
+>>>>>>> 0ea698ba (Try to create a propIsValid in StateSpec)
 
 --
 -- Generic Properties
@@ -150,6 +161,7 @@ propBelowSizeLimit txSizeLimit forAllTx =
  where
   showKB nb = show (nb `div` 1024) <> "kB"
 
+<<<<<<< HEAD
 -- TODO: DRY with Hydra.Chain.Direct.Contract.Mutation.propTransactionValidates?
 propIsValid ::
   forall st.
@@ -172,6 +184,30 @@ propIsValid exUnits forAllTx =
                 & counterexample ("Lookup utxo: " <> decodeUtf8 (encodePretty lookupUTxO))
                 & counterexample ("Redeemer report: " <> show redeemerReport)
                 & counterexample "Phase-2 validation failed"
+||||||| parent of 0ea698ba (Try to create a propIsValid in StateSpec)
+=======
+-- TODO: DRY with Hydra.Chain.Direct.Contract.Mutation.propTransactionValidates?
+propIsValid ::
+  forall st.
+  ((OnChainHeadState st -> Tx -> Property) -> Property) ->
+  SpecWith ()
+propIsValid forAllTx =
+  prop "validates within budget" $
+    forAllTx $ \st tx ->
+      let lookupUTxO = getKnownUTxO st
+       in case evaluateTx tx lookupUTxO of
+            Left basicFailure ->
+              property False
+                & counterexample ("Tx: " <> toString (renderTx tx))
+                & counterexample ("Lookup utxo: " <> decodeUtf8 (encodePretty lookupUTxO))
+                & counterexample ("Phase-1 validation failed: " <> show basicFailure)
+            Right redeemerReport ->
+              all isRight (Map.elems redeemerReport)
+                & counterexample ("Tx: " <> toString (renderTx tx))
+                & counterexample ("Lookup utxo: " <> decodeUtf8 (encodePretty lookupUTxO))
+                & counterexample ("Redeemer report: " <> show redeemerReport)
+                & counterexample "Phase-2 validation failed"
+>>>>>>> 0ea698ba (Try to create a propIsValid in StateSpec)
 
 --
 -- QuickCheck Extras
@@ -289,7 +325,7 @@ forAllFanout action = do
         action stClosed (fanout utxo stClosed)
           & label ("Fanout size: " <> prettyUpperLimit maxAssetsSupported (assetsInUtxo utxo))
  where
-  maxAssetsSupported = 25
+  maxAssetsSupported = 1
   assetsInUtxo = valueSize . foldMap txOutValue
 
 prettyUpperLimit :: (Ord a, Show a, Num a) => a -> a -> String
