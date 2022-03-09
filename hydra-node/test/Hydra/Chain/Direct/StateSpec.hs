@@ -287,17 +287,21 @@ forAllFanout action = do
     forAll (genStClosed ctx) $ \stClosed ->
       forAll (resize maxAssetsSupported $ simplifyUTxO <$> genUTxO) $ \utxo ->
         action stClosed (fanout utxo stClosed)
-          & label ("Fanout size: " <> prettyLength (assetsInUtxo utxo))
+          & label ("Fanout size: " <> prettyUpperLimit maxAssetsSupported (assetsInUtxo utxo))
  where
-  maxAssetsSupported = 1
-
+  maxAssetsSupported = 25
   assetsInUtxo = valueSize . foldMap txOutValue
 
-  prettyLength len
-    | len >= 100 = "> 100"
-    | len >= 50 = "50-99"
-    | len >= 10 = "10-49"
-    | otherwise = "00-10"
+prettyUpperLimit :: (Ord a, Show a, Num a) => a -> a -> String
+prettyUpperLimit limit x
+  | x < lowerBound = "< " <> show lowerBound <> " (much smaller)"
+  | x < limit = "< " <> show limit <> " (smaller)"
+  | x == limit = "== " <> show limit <> " (limit)"
+  | otherwise = "> " <> show limit <> "(above limit!)"
+ where
+  stepSize = 5 -- TODO: configurable?
+
+  lowerBound = limit - stepSize
 
 --
 -- Generators
