@@ -51,7 +51,6 @@ import qualified Test.Cardano.Ledger.Shelley.Generator.Utxo as Ledger.Generator
 import Test.QuickCheck (
   choose,
   getSize,
-  scale,
   shrinkList,
   shrinkMapBy,
   sized,
@@ -259,7 +258,7 @@ genOutput ::
   VerificationKey PaymentKey ->
   Gen (TxOut ctx)
 genOutput vk = do
-  value <- fromLedgerValue <$> scale (* 8) arbitrary
+  value <- fromLedgerValue <$> arbitrary
   pure $ TxOut (mkVkAddress (Testnet $ NetworkMagic 42) vk) value TxOutDatumNone
 
 -- | A more random generator than the 'Arbitrary TxIn' from cardano-ledger.
@@ -322,7 +321,7 @@ genOneUTxOFor vk = do
   -- NOTE(AB): calling this generator while running a property will yield larger and larger
   -- values (quikcheck increases the 'size' parameter upon success) up to the point they are
   -- too large to fit in a transaction and validation fails in the ledger
-  output <- scale (const 1) $ genOutput vk
+  output <- genOutput vk
   pure $ UTxO $ Map.singleton (fromLedgerTxIn input) output
 
 -- | NOTE: See note on 'mkVkAddress' about 'NetworkId'.

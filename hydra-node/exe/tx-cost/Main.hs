@@ -16,7 +16,6 @@ import qualified Cardano.Ledger.Shelley.API as Ledger
 import qualified Cardano.Ledger.Val as Ledger
 import Control.Exception (ErrorCall)
 import qualified Data.ByteString as BS
-import Data.List (maximumBy)
 import qualified Data.Map as Map
 import Data.Maybe (fromJust)
 import Data.Maybe.Strict (StrictMaybe (..))
@@ -101,13 +100,13 @@ costOfCollectCom = do
     (tx, lookupUTxO) <- generate $ do
       ctx <- genHydraContextOf n
       initTx <- genInitTx ctx
-      commits <- genCommits ctx initTx
+      commits <- scale (const 1) (genCommits ctx initTx)
       stIdle <- genStIdle ctx
       let stInitialized = executeCommits initTx commits stIdle
       pure (collect stInitialized, getKnownUTxO stInitialized)
     case evaluateTx tx lookupUTxO of
       (Right (rights . toList -> xs)) | length xs == n + 1 -> do
-        let Ledger.ExUnits mem cpu = maximumBy (compare `on` Ledger.exUnitsMem) xs
+        let Ledger.ExUnits mem cpu = mconcat xs
         putStrLn $
           showPad 17 n
             <> showPad 12 (fixed 3 (100 * fromIntegral mem / maxMem))
