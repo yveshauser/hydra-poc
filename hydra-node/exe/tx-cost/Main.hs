@@ -95,7 +95,7 @@ main = do
 costOfCollectCom :: IO ()
 costOfCollectCom = do
   putStrLn "Cost of running the collect-com validator"
-  putStrLn "# Participants   % max Mem   % max CPU"
+  putStrLn "# Participants   % max Mem (collect-com + commits)"
   forM_ [1 .. 10] $ \n -> do
     putStrLn "-----------------------------------------------"
     (tx, lookupUTxO) <- pure $
@@ -108,12 +108,15 @@ costOfCollectCom = do
         pure (collect stInitialized, getKnownUTxO stInitialized)
     case evaluateTx tx lookupUTxO of
       (Right (rights . toList -> xs)) | length xs == n + 1 -> do
-        let Ledger.ExUnits mem cpu = mconcat xs
+        let xs' =
+              ( \(Ledger.ExUnits mem _cpu) ->
+                  fixed 3 (100 * fromIntegral mem / maxMem)
+              )
+                <$> xs
         putStrLn $
           showPad 17 n
-            <> showPad 12 (fixed 3 (100 * fromIntegral mem / maxMem))
-            <> showPad 12 (fixed 3 (100 * fromIntegral cpu / maxCpu))
-      _ -> do
+            <> showPad 12 (sortOn Down xs')
+      _e -> do
         putStrLn $
           showPad 17 n
             <> ("-" <> replicate 11 ' ')
