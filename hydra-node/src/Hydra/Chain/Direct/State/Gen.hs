@@ -61,6 +61,10 @@ ctxHeadParameters HydraContext{ctxContestationPeriod, ctxParties} =
 genHydraContext :: Gen HydraContext
 genHydraContext = do
   n <- choose (1, 3)
+  genHydraContextOf n
+
+genHydraContextOf :: Int -> Gen HydraContext
+genHydraContextOf n = do
   ctxVerificationKeys <- replicateM n genVerificationKey
   ctxParties <- vector n
   ctxNetworkId <- Testnet . NetworkMagic <$> arbitrary

@@ -16,6 +16,7 @@ import qualified Cardano.Ledger.Shelley.API as Ledger
 import qualified Cardano.Ledger.Val as Ledger
 import Control.Exception (ErrorCall)
 import qualified Data.ByteString as BS
+import Data.List (maximumBy)
 import qualified Data.Map as Map
 import Data.Maybe (fromJust)
 import Data.Maybe.Strict (StrictMaybe (..))
@@ -44,6 +45,17 @@ import Hydra.Cardano.Api (
   toScriptData,
   pattern ScriptWitness,
   pattern TxOut,
+ )
+import Hydra.Chain.Direct.State (
+  collect,
+  getKnownUTxO,
+ )
+import Hydra.Chain.Direct.State.Gen (
+  executeCommits,
+  genCommits,
+  genHydraContextOf,
+  genInitTx,
+  genStIdle,
  )
 import Hydra.Chain.Direct.Tx (fanoutTx)
 import qualified Hydra.Contract.Hash as Hash
@@ -75,9 +87,45 @@ import Validators (merkleTreeValidator, mtBuilderValidator)
 
 main :: IO ()
 main = do
+  costOfCollectCom
   costOfFanOut
   costOfMerkleTree
   costOfHashing
+
+costOfCollectCom :: IO ()
+costOfCollectCom = do
+  putStrLn "Cost of running the collect-com validator"
+  putStrLn "# Participants   % max Mem   % max CPU"
+  forM_ [1 .. 10] $ \n -> do
+    putStrLn "-----------------------------------------------"
+    (tx, lookupUTxO) <- generate $ do
+      ctx <- genHydraContextOf n
+      initTx <- genInitTx ctx
+      commits <- genCommits ctx initTx
+      stIdle <- genStIdle ctx
+      let stInitialized = executeCommits initTx commits stIdle
+      pure (collect stInitialized, getKnownUTxO stInitialized)
+    case evaluateTx tx lookupUTxO of
+      (Right (rights . toList -> xs)) | length xs == n + 1 -> do
+        let Ledger.ExUnits mem cpu = maximumBy (compare `on` Ledger.exUnitsMem) xs
+        putStrLn $
+          showPad 17 n
+            <> showPad 12 (fixed 3 (100 * fromIntegral mem / maxMem))
+            <> showPad 12 (fixed 3 (100 * fromIntegral cpu / maxCpu))
+      _ ->
+        putStrLn $
+          showPad 17 n
+            <> ("-" <> replicate 11 ' ')
+            <> ("-" <> replicate 11 ' ')
+ where
+  fixed :: Int -> Double -> Double
+  fixed p x =
+    fromIntegral @Integer (round (x * (10 ^ p))) / (10 ^ p)
+
+  Ledger.ExUnits
+    (fromIntegral @_ @Double -> maxMem)
+    (fromIntegral @_ @Double -> maxCpu) =
+      Ledger._maxTxExUnits pparams
 
 costOfFanOut :: IO ()
 costOfFanOut = do
