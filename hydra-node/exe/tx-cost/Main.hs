@@ -81,15 +81,16 @@ import Test.Plutus.Validator (
   defaultMaxExecutionUnits,
   evaluateScriptExecutionUnits,
  )
-import Test.QuickCheck (generate, vectorOf)
+import Test.QuickCheck (generate, scale, vectorOf)
 import Validators (merkleTreeValidator, mtBuilderValidator)
 
 main :: IO ()
 main = do
   costOfCollectCom
-  costOfFanOut
-  costOfMerkleTree
-  costOfHashing
+  when False $ do
+    costOfFanOut
+    costOfMerkleTree
+    costOfHashing
 
 costOfCollectCom :: IO ()
 costOfCollectCom = do
@@ -97,13 +98,14 @@ costOfCollectCom = do
   putStrLn "# Participants   % max Mem   % max CPU"
   forM_ [1 .. 10] $ \n -> do
     putStrLn "-----------------------------------------------"
-    (tx, lookupUTxO) <- generate $ do
-      ctx <- genHydraContextOf n
-      initTx <- genInitTx ctx
-      commits <- scale (const 1) (genCommits ctx initTx)
-      stIdle <- genStIdle ctx
-      let stInitialized = executeCommits initTx commits stIdle
-      pure (collect stInitialized, getKnownUTxO stInitialized)
+    (tx, lookupUTxO) <- pure $
+      flip generateWith 42 $ do
+        ctx <- genHydraContextOf n
+        initTx <- genInitTx ctx
+        commits <- scale (const 1) (genCommits ctx initTx)
+        stIdle <- genStIdle ctx
+        let stInitialized = executeCommits initTx commits stIdle
+        pure (collect stInitialized, getKnownUTxO stInitialized)
     case evaluateTx tx lookupUTxO of
       (Right (rights . toList -> xs)) | length xs == n + 1 -> do
         let Ledger.ExUnits mem cpu = mconcat xs
@@ -111,7 +113,7 @@ costOfCollectCom = do
           showPad 17 n
             <> showPad 12 (fixed 3 (100 * fromIntegral mem / maxMem))
             <> showPad 12 (fixed 3 (100 * fromIntegral cpu / maxCpu))
-      _ ->
+      _ -> do
         putStrLn $
           showPad 17 n
             <> ("-" <> replicate 11 ' ')
