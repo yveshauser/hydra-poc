@@ -386,7 +386,7 @@ genStIdle ::
 genStIdle HydraContext{ctxVerificationKeys, ctxNetworkId, ctxParties} = do
   ownParty <- elements ctxParties
   ownVerificationKey <- elements ctxVerificationKeys
-  pure $ idleOnChainHeadState ctxNetworkId ownVerificationKey ownParty
+  pure $ idleOnChainHeadState ctxNetworkId ownVerificationKey ownParty ctxVerificationKeys
 
 genStInitialized ::
   HydraContext ->
@@ -430,7 +430,7 @@ genCommits ::
   Gen [Tx]
 genCommits ctx initTx = do
   forM (zip (ctxVerificationKeys ctx) (ctxParties ctx)) $ \(p, vk) -> do
-    let stIdle = idleOnChainHeadState (ctxNetworkId ctx) p vk
+    let stIdle = idleOnChainHeadState (ctxNetworkId ctx) p vk (ctxVerificationKeys ctx)
     let (_, stInitialized) = unsafeObserveTx @_ @'StInitialized initTx stIdle
     utxo <- genCommit
     pure $ unsafeCommit utxo stInitialized
