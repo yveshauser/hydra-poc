@@ -128,7 +128,7 @@ costOfCollectCom = do
 
   Ledger.ExUnits
     (fromIntegral @_ @Double -> maxMem)
-    (fromIntegral @_ @Double -> maxCpu) =
+    (fromIntegral @_ @Double -> _maxCpu) =
       Ledger._maxTxExUnits pparams
 
 costOfFanOut :: IO ()

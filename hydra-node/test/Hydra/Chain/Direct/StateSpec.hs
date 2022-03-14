@@ -6,18 +6,19 @@ import Hydra.Cardano.Api
 import Hydra.Prelude hiding (label)
 import Test.Hydra.Prelude
 
-import Cardano.Binary (serialize)
 import qualified Cardano.Api.UTxO as UTxO
+import Cardano.Binary (serialize)
 import qualified Data.ByteString.Lazy as LBS
-import Data.List ((!!), elemIndex, intersect)
+import Data.List (elemIndex, intersect, (!!))
 import Data.Maybe (fromJust)
 import qualified Data.Set as Set
-import Data.Type.Equality ((:~:)(..), testEquality)
+import Data.Type.Equality (testEquality, (:~:) (..))
+import Hydra.Chain.Direct.Fixture (maxTxExecutionUnits, maxTxSize)
 import Hydra.Chain.Direct.State (
   HasTransition (..),
   HeadStateKind (..),
   HeadStateKindVal (..),
-  ObserveTx(..),
+  ObserveTx (..),
   OnChainHeadState,
   SomeOnChainHeadState (..),
   TransitionFrom (..),
@@ -29,33 +30,32 @@ import Hydra.Chain.Direct.State (
   initialize,
   observeSomeTx,
  )
-import Hydra.Chain.Direct.Fixture (maxTxSize, maxTxExecutionUnits)
+import Hydra.Chain.Direct.State.Gen (
+  HydraContext (..),
+  ctxHeadParameters,
+  executeCommits,
+  genCommit,
+  genCommits,
+  genHydraContext,
+  genInitTx,
+  genStClosed,
+  genStIdle,
+  genStInitialized,
+  genStOpen,
+  unsafeCommit,
+ )
 import Hydra.Ledger.Cardano (
   genTxIn,
   genUTxO,
   simplifyUTxO,
  )
-import Hydra.Chain.Direct.State.Gen
-  ( ctxHeadParameters
-  , HydraContext(..)
-  , genHydraContext
-  , genStIdle
-  , genStInitialized
-  , genStOpen
-  , genStClosed
-  , genInitTx
-  , genCommits
-  , genCommit
-  , unsafeCommit
-  , executeCommits
-  )
 
+import qualified Data.Map as Map
+import Hydra.Ledger.Cardano.Evaluate (evaluateTx')
 import Hydra.Snapshot (isInitialSnapshot)
-import qualified Prelude
 import Test.QuickCheck (
   Property,
   Testable (property),
-  (==>),
   checkCoverage,
   classify,
   counterexample,
@@ -66,16 +66,10 @@ import Test.QuickCheck (
   label,
   resize,
   sublistOf,
+  (==>),
  )
 import Type.Reflection (typeOf)
-<<<<<<< HEAD
-import qualified Data.Map as Map
-import Hydra.Ledger.Cardano.Evaluate (evaluateTx')
-||||||| parent of 0ea698ba (Try to create a propIsValid in StateSpec)
-=======
-import qualified Data.Map as Map
-import Hydra.Ledger.Cardano.Evaluate (evaluateTx)
->>>>>>> 0ea698ba (Try to create a propIsValid in StateSpec)
+import qualified Prelude
 
 spec :: Spec
 spec = parallel $ do
@@ -88,43 +82,45 @@ spec = parallel $ do
   describe "init" $ do
     prop "is not observed if not invited" $
       forAll2 genHydraContext genHydraContext $ \(ctxA, ctxB) ->
-        null (ctxParties ctxA `intersect` ctxParties ctxB) ==>
-        forAll2 (genStIdle ctxA) (genStIdle ctxB) $ \(stIdleA, stIdleB) ->
-          forAll genTxIn $ \seedInput ->
-            let tx = initialize
-                  (ctxHeadParameters ctxA)
-                  (ctxVerificationKeys ctxA)
-                  seedInput
-                  stIdleA
-             in isNothing (observeTx @_ @'StInitialized tx stIdleB)
+        null (ctxParties ctxA `intersect` ctxParties ctxB)
+          ==> forAll2 (genStIdle ctxA) (genStIdle ctxB)
+          $ \(stIdleA, stIdleB) ->
+            forAll genTxIn $ \seedInput ->
+              let tx =
+                    initialize
+                      (ctxHeadParameters ctxA)
+                      (ctxVerificationKeys ctxA)
+                      seedInput
+                      stIdleA
+               in isNothing (observeTx @_ @ 'StInitialized tx stIdleB)
 
   describe "commit" $ do
     propBelowSizeLimit maxTxSize forAllCommit
 
     prop "consumes all inputs that are committed" $
       forAllCommit $ \st tx ->
-         case observeTx @_ @'StInitialized tx st of
-            Just (_, st') ->
-              let knownInputs = UTxO.inputSet (getKnownUTxO st')
-               in knownInputs `Set.disjoint` txInputSet tx
-            Nothing ->
-              False
+        case observeTx @_ @ 'StInitialized tx st of
+          Just (_, st') ->
+            let knownInputs = UTxO.inputSet (getKnownUTxO st')
+             in knownInputs `Set.disjoint` txInputSet tx
+          Nothing ->
+            False
 
     prop "can only be applied / observed once" $
       forAllCommit $ \st tx ->
-         case observeTx @_ @'StInitialized tx st of
-            Just (_, st') ->
-              case observeTx @_ @'StInitialized tx st' of
-                Just{} -> False
-                Nothing -> True
-            Nothing ->
-              False
+        case observeTx @_ @ 'StInitialized tx st of
+          Just (_, st') ->
+            case observeTx @_ @ 'StInitialized tx st' of
+              Just{} -> False
+              Nothing -> True
+          Nothing ->
+            False
 
   describe "abort" $ do
-    propBelowSizeLimit (2*maxTxSize) forAllAbort
+    propBelowSizeLimit (2 * maxTxSize) forAllAbort
 
   describe "collectCom" $ do
-    propBelowSizeLimit (2*maxTxSize) forAllCollectCom
+    propBelowSizeLimit (2 * maxTxSize) forAllCollectCom
     propIsValid tenTimesTxExecutionUnits forAllCollectCom
 
   describe "close" $ do
@@ -132,7 +128,6 @@ spec = parallel $ do
 
   describe "fanout" $ do
     propBelowSizeLimit maxTxSize forAllFanout
-<<<<<<< HEAD
     -- TODO: look into why this is failing
     propIsValid maxTxExecutionUnits (expectFailure . forAllFanout)
 
@@ -142,10 +137,6 @@ tenTimesTxExecutionUnits =
     { executionMemory = 100_000_000
     , executionSteps = 100_000_000_000
     }
-||||||| parent of 0ea698ba (Try to create a propIsValid in StateSpec)
-=======
-    propIsValid forAllFanout
->>>>>>> 0ea698ba (Try to create a propIsValid in StateSpec)
 
 --
 -- Generic Properties
@@ -168,7 +159,6 @@ propBelowSizeLimit txSizeLimit forAllTx =
  where
   showKB nb = show (nb `div` 1024) <> "kB"
 
-<<<<<<< HEAD
 -- TODO: DRY with Hydra.Chain.Direct.Contract.Mutation.propTransactionValidates?
 propIsValid ::
   forall st.
@@ -191,30 +181,6 @@ propIsValid exUnits forAllTx =
                 & counterexample ("Lookup utxo: " <> decodeUtf8 (encodePretty lookupUTxO))
                 & counterexample ("Redeemer report: " <> show redeemerReport)
                 & counterexample "Phase-2 validation failed"
-||||||| parent of 0ea698ba (Try to create a propIsValid in StateSpec)
-=======
--- TODO: DRY with Hydra.Chain.Direct.Contract.Mutation.propTransactionValidates?
-propIsValid ::
-  forall st.
-  ((OnChainHeadState st -> Tx -> Property) -> Property) ->
-  SpecWith ()
-propIsValid forAllTx =
-  prop "validates within budget" $
-    forAllTx $ \st tx ->
-      let lookupUTxO = getKnownUTxO st
-       in case evaluateTx tx lookupUTxO of
-            Left basicFailure ->
-              property False
-                & counterexample ("Tx: " <> toString (renderTx tx))
-                & counterexample ("Lookup utxo: " <> decodeUtf8 (encodePretty lookupUTxO))
-                & counterexample ("Phase-1 validation failed: " <> show basicFailure)
-            Right redeemerReport ->
-              all isRight (Map.elems redeemerReport)
-                & counterexample ("Tx: " <> toString (renderTx tx))
-                & counterexample ("Lookup utxo: " <> decodeUtf8 (encodePretty lookupUTxO))
-                & counterexample ("Redeemer report: " <> show redeemerReport)
-                & counterexample "Phase-2 validation failed"
->>>>>>> 0ea698ba (Try to create a propIsValid in StateSpec)
 
 --
 -- QuickCheck Extras
@@ -225,26 +191,34 @@ forAllSt ::
   (forall st. (HasTransition st) => OnChainHeadState st -> Tx -> property) ->
   Property
 forAllSt action =
-  forAllBlind (elements
-    [ ( forAllInit action
-      , Transition @'StIdle (TransitionTo (Proxy @'StInitialized))
-      )
-    , ( forAllCommit action
-      , Transition @'StInitialized (TransitionTo (Proxy @'StInitialized))
-      )
-    , ( forAllAbort action
-      , Transition @'StInitialized (TransitionTo (Proxy @'StIdle))
-      )
-    , ( forAllCollectCom action
-      , Transition @'StInitialized (TransitionTo (Proxy @'StOpen))
-      )
-    , ( forAllClose action
-      , Transition @'StOpen (TransitionTo (Proxy @'StClosed))
-      )
-    , ( forAllFanout action
-      , Transition @'StClosed (TransitionTo (Proxy @'StIdle))
-      )
-    ])
+  forAllBlind
+    ( elements
+        [
+          ( forAllInit action
+          , Transition @ 'StIdle (TransitionTo (Proxy @ 'StInitialized))
+          )
+        ,
+          ( forAllCommit action
+          , Transition @ 'StInitialized (TransitionTo (Proxy @ 'StInitialized))
+          )
+        ,
+          ( forAllAbort action
+          , Transition @ 'StInitialized (TransitionTo (Proxy @ 'StIdle))
+          )
+        ,
+          ( forAllCollectCom action
+          , Transition @ 'StInitialized (TransitionTo (Proxy @ 'StOpen))
+          )
+        ,
+          ( forAllClose action
+          , Transition @ 'StOpen (TransitionTo (Proxy @ 'StClosed))
+          )
+        ,
+          ( forAllFanout action
+          , Transition @ 'StClosed (TransitionTo (Proxy @ 'StIdle))
+          )
+        ]
+    )
     (\(p, lbl) -> genericCoverTable [lbl] p)
 
 forAllInit ::
@@ -257,10 +231,12 @@ forAllInit action =
       forAll genTxIn $ \seedInput -> do
         let tx = initialize (ctxHeadParameters ctx) (ctxVerificationKeys ctx) seedInput stIdle
          in action stIdle tx
-              & classify (length (ctxParties ctx) == 1)
-                  "1 party"
-              & classify (length (ctxParties ctx) > 1)
-                  "2+ parties"
+              & classify
+                (length (ctxParties ctx) == 1)
+                "1 party"
+              & classify
+                (length (ctxParties ctx) > 1)
+                "2+ parties"
 
 forAllCommit ::
   (Testable property) =>
@@ -272,10 +248,12 @@ forAllCommit action = do
       forAll genCommit $ \utxo ->
         let tx = unsafeCommit utxo stInitialized
          in action stInitialized tx
-              & classify (null utxo)
-                  "Empty commit"
-              & classify (not (null utxo))
-                  "Non-empty commit"
+              & classify
+                (null utxo)
+                "Empty commit"
+              & classify
+                (not (null utxo))
+                "Non-empty commit"
 
 forAllAbort ::
   (Testable property) =>
@@ -288,17 +266,20 @@ forAllAbort action = do
         forAll (genStIdle ctx) $ \stIdle ->
           let stInitialized = executeCommits initTx commits stIdle
            in action stInitialized (abort stInitialized)
-                & classify (null commits)
-                    "Abort immediately, after 0 commits"
-                & classify (not (null commits) && length commits < length (ctxParties ctx))
-                    "Abort after some (but not all) commits"
-                & classify (length commits == length (ctxParties ctx))
-                    "Abort after all commits"
+                & classify
+                  (null commits)
+                  "Abort immediately, after 0 commits"
+                & classify
+                  (not (null commits) && length commits < length (ctxParties ctx))
+                  "Abort after some (but not all) commits"
+                & classify
+                  (length commits == length (ctxParties ctx))
+                  "Abort after all commits"
 
-forAllCollectCom
-  :: (Testable property)
-  => (OnChainHeadState 'StInitialized -> Tx -> property)
-  -> Property
+forAllCollectCom ::
+  (Testable property) =>
+  (OnChainHeadState 'StInitialized -> Tx -> property) ->
+  Property
 forAllCollectCom action = do
   forAll genHydraContext $ \ctx ->
     forAll (genInitTx ctx) $ \initTx -> do
@@ -307,24 +288,26 @@ forAllCollectCom action = do
           let stInitialized = executeCommits initTx commits stIdle
            in action stInitialized (collect stInitialized)
 
-forAllClose
-  :: (Testable property)
-  => (OnChainHeadState 'StOpen -> Tx -> property)
-  -> Property
+forAllClose ::
+  (Testable property) =>
+  (OnChainHeadState 'StOpen -> Tx -> property) ->
+  Property
 forAllClose action = do
   forAll genHydraContext $ \ctx ->
     forAll (genStOpen ctx) $ \stOpen ->
       forAll arbitrary $ \snapshot ->
         action stOpen (close snapshot stOpen)
-          & classify (isInitialSnapshot snapshot)
-              "Close with initial snapshot"
-          & classify (not (isInitialSnapshot snapshot))
-              "Close with multi-signed snapshot"
+          & classify
+            (isInitialSnapshot snapshot)
+            "Close with initial snapshot"
+          & classify
+            (not (isInitialSnapshot snapshot))
+            "Close with multi-signed snapshot"
 
-forAllFanout
-  :: (Testable property)
-  => (OnChainHeadState 'StClosed -> Tx -> property)
-  -> Property
+forAllFanout ::
+  (Testable property) =>
+  (OnChainHeadState 'StClosed -> Tx -> property) ->
+  Property
 forAllFanout action = do
   forAll genHydraContext $ \ctx ->
     forAll (genStClosed ctx) $ \stClosed ->
@@ -343,7 +326,6 @@ prettyUpperLimit limit x
   | otherwise = "> " <> show limit <> "(above limit!)"
  where
   stepSize = 5 -- TODO: configurable?
-
   lowerBound = limit - stepSize
 
 --
@@ -351,16 +333,18 @@ prettyUpperLimit limit x
 --
 
 allTransitions :: [Transition]
-allTransitions = mconcat
-  [ Transition <$> transitions (Proxy @'StIdle)
-  , Transition <$> transitions (Proxy @'StInitialized)
-  , Transition <$> transitions (Proxy @'StOpen)
-  , Transition <$> transitions (Proxy @'StClosed)
-  ]
+allTransitions =
+  mconcat
+    [ Transition <$> transitions (Proxy @ 'StIdle)
+    , Transition <$> transitions (Proxy @ 'StInitialized)
+    , Transition <$> transitions (Proxy @ 'StOpen)
+    , Transition <$> transitions (Proxy @ 'StClosed)
+    ]
 
 data Transition where
   Transition ::
-    forall (st :: HeadStateKind). (HeadStateKindVal st, Typeable st) =>
+    forall (st :: HeadStateKind).
+    (HeadStateKindVal st, Typeable st) =>
     TransitionFrom st ->
     Transition
 deriving instance Typeable Transition
