@@ -359,11 +359,12 @@ handleNewTxEvent ::
   CardanoClient ->
   State ->
   EventM n (Next State)
-handleNewTxEvent Client{sendInput, sk} CardanoClient{networkId} s = case s ^? headStateL of
-  Just Open{utxo} ->
-    continue $ s & dialogStateL .~ transactionBuilderDialog utxo
-  _ ->
-    continue $ s & feedbackL ?~ UserFeedback Error "Invalid command."
+handleNewTxEvent Client{sendInput, sk} CardanoClient{networkId} s =
+  case s ^? headStateL of
+    Just Open{utxo} ->
+      continue $ s & dialogStateL .~ transactionBuilderDialog utxo
+    _ ->
+      continue $ s & feedbackL ?~ UserFeedback Error "Invalid command."
  where
   vk = getVerificationKey sk
 
@@ -373,9 +374,10 @@ handleNewTxEvent Client{sendInput, sk} CardanoClient{networkId} s = case s ^? he
     myUTxO = myAvailableUTxO networkId vk s
     title = "Select UTXO to spend"
     -- FIXME: This crashes if the utxo is empty
-    form = newForm (utxoCheckboxField myUTxO) (Map.toList $ fmap (,False) myUTxO)
-    submit s' selectedUtxo =
-      continue $ s' & dialogStateL .~ recipientsDialog selectedUtxo utxo
+    form = newForm (utxoCheckboxField myUTxO) (fmap (,False) myUTxO)
+    submit s' result =
+      let selectedUtxo = Map.toList $ Map.mapMaybe (\(v, p) -> if p then Just v else Nothing) result
+       in continue $ s' & dialogStateL .~ recipientsDialog selectedUtxo utxo
 
   recipientsDialog selectedUtxo (UTxO utxo) =
     Dialog title form submit
