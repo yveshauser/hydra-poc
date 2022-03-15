@@ -139,30 +139,35 @@ instance Arbitrary Tx where
 
 -- | Create a zero-fee, payment cardano transaction.
 mkSimpleTx ::
-  (TxIn, TxOut CtxUTxO) ->
+  NetworkId ->
+  [(TxIn, TxOut CtxUTxO)] ->
   -- | Recipient address and amount.
   (AddressInEra, Value) ->
   -- | Sender's signing key.
   SigningKey PaymentKey ->
   Either TxBodyError Tx
-mkSimpleTx (txin, TxOut owner valueIn datum) (recipient, valueOut) sk = do
+mkSimpleTx networkId inputs (recipient, valueOut) sk = do
   body <- makeTransactionBody bodyContent
   let witnesses = [makeShelleyKeyWitness body (WitnessPaymentKey sk)]
   pure $ makeSignedTransaction witnesses body
  where
   bodyContent =
     emptyTxBody
-      { txIns = map (,BuildTxWith $ KeyWitness KeyWitnessForSpending) [txin]
+      { txIns = map (,BuildTxWith $ KeyWitness KeyWitnessForSpending) $ fst <$> inputs
       , txOuts = outs
       , txFee = TxFeeExplicit fee
       }
+
+  owner = mkVkAddress networkId (getVerificationKey sk)
+
+  valueIn = foldMap (txOutValue . snd) inputs
 
   outs =
     TxOut @CtxTx recipient valueOut TxOutDatumNone :
       [ TxOut @CtxTx
         owner
         (valueIn <> negateValue valueOut)
-        (toTxContext datum)
+        TxOutDatumNone
       | valueOut /= valueIn
       ]
 

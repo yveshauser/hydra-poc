@@ -225,7 +225,8 @@ initAndClose tracer clusterIx node@(RunningNode _ nodeSocket) = do
       let firstCommittedUTxO = Prelude.head $ UTxO.pairs committedUTxOByAlice
       let Right tx =
             mkSimpleTx
-              firstCommittedUTxO
+              defaultNetworkId
+              [firstCommittedUTxO]
               (inHeadAddress bobCardanoVk, lovelaceToValue paymentFromAliceToBob)
               aliceCardanoSk
       send n1 $ input "NewTx" ["transaction" .= tx]

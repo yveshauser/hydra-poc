@@ -373,11 +373,11 @@ handleNewTxEvent Client{sendInput, sk} CardanoClient{networkId} s = case s ^? he
     myUTxO = myAvailableUTxO networkId vk s
     title = "Select UTXO to spend"
     -- FIXME: This crashes if the utxo is empty
-    form = newForm (utxoRadioField myUTxO) (Prelude.head (Map.toList myUTxO))
-    submit s' input =
-      continue $ s' & dialogStateL .~ recipientsDialog input utxo
+    form = newForm (utxoCheckboxField myUTxO) (Map.toList $ fmap (,False) myUTxO)
+    submit s' selectedUtxo =
+      continue $ s' & dialogStateL .~ recipientsDialog selectedUtxo utxo
 
-  recipientsDialog input (UTxO utxo) =
+  recipientsDialog selectedUtxo (UTxO utxo) =
     Dialog title form submit
    where
     title = "Select a recipient"
@@ -391,14 +391,14 @@ handleNewTxEvent Client{sendInput, sk} CardanoClient{networkId} s = case s ^? he
        in newForm [field] (Prelude.head addresses)
 
     submit s' recipient =
-      continue $ s' & dialogStateL .~ amountDialog input recipient
+      continue $ s' & dialogStateL .~ amountDialog selectedUtxo recipient
 
-  amountDialog input@(_, TxOut _ v _) recipient =
+  amountDialog selectedUtxo recipient =
     Dialog title form submit
    where
     title = "Choose an amount (max: " <> show limit <> ")"
 
-    Lovelace limit = selectLovelace v
+    Lovelace limit = selectLovelace $ foldMap (txOutValue . snd) selectedUtxo
 
     form =
       -- NOTE(SN): use 'Integer' because we don't have a 'Read Lovelace'
@@ -406,7 +406,7 @@ handleNewTxEvent Client{sendInput, sk} CardanoClient{networkId} s = case s ^? he
        in newForm [field] limit
 
     submit s' amount = do
-      case mkSimpleTx input (recipient, lovelaceToValue $ Lovelace amount) sk of
+      case mkSimpleTx networkId selectedUtxo (recipient, lovelaceToValue $ Lovelace amount) sk of
         Left e -> continue $ s' & feedbackL ?~ UserFeedback Error ("Failed to construct tx, contact @_ktorz_ on twitter: " <> show e)
         Right tx -> do
           liftIO (sendInput (NewTx tx))

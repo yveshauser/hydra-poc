@@ -128,13 +128,7 @@ genDatasetConstantUTxO faucetSk pparams nClients nTxs = do
     Gen (UTxO, (VerificationKey PaymentKey, SigningKey PaymentKey), [Tx])
   generateOneTransfer (utxo, (_, sender), txs) _ = do
     recipient <- genKeyPair
-    -- NOTE(AB): elements is partial, it crashes if given an empty list, We don't expect
-    -- this function to be ever used in production, and crash will be caught in tests
-    case UTxO.pairs utxo of
-      [txin] ->
-        case mkSimpleTx txin (mkVkAddress networkId (fst recipient), balance @Tx utxo) sender of
-          Left e -> error $ "Tx construction failed: " <> show e <> ", utxo: " <> show utxo
-          Right tx ->
-            pure (utxoFromTx tx, recipient, tx : txs)
-      _ ->
-        error "Couldn't generate transaction sequence: need exactly one UTXO."
+    case mkSimpleTx networkId (UTxO.pairs utxo) (mkVkAddress networkId (fst recipient), balance @Tx utxo) sender of
+      Left e -> error $ "Tx construction failed: " <> show e <> ", utxo: " <> show utxo
+      Right tx ->
+        pure (utxoFromTx tx, recipient, tx : txs)
