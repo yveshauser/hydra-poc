@@ -422,7 +422,7 @@ simulatedChainAndNetwork = do
           reverse <$> readTVarIO refHistory
       }
  where
-  postTx nodes refHistory tx = do
+  postTx nodes refHistory _chainState tx = do
     res <- atomically $ do
       modifyTVar' refHistory (tx :)
       Just <$> readTVar nodes

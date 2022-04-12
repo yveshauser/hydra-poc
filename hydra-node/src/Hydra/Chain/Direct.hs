@@ -62,6 +62,7 @@ import Hydra.Chain (
   Chain (..),
   ChainCallback,
   ChainComponent,
+  ChainState (ChainState),
   OnChainTx (..),
   PostChainTx (..),
   PostTxError (..),
@@ -180,7 +181,8 @@ withDirectChain tracer networkId iocp socketPath keyPair party cardanoKeys point
             threadDelay 2
             action $
               Chain
-                { postTx = \tx -> do
+                { postTx = \_chainState tx -> do
+                    -- TODO: pass opaque '_chainState' to fromPostChainTx
                     traceWith tracer $ ToPost tx
                     -- XXX(SN): 'finalizeTx' retries until a payment utxo is
                     -- found. See haddock for details
@@ -368,29 +370,23 @@ chainSyncClient tracer callback headState = \case
       { recvMsgRollForward = \blk _tip -> do
           ChainSyncClient $ do
             let receivedTxs = toList $ getAlonzoTxs blk
-            onChainTxs <- runOnChainTxs receivedTxs
-            unless (null receivedTxs) $
-              traceWith tracer $ ReceivedTxs{onChainTxs, receivedTxs = map (\tx -> (getTxId tx, tx)) receivedTxs}
-            mapM_ callback onChainTxs
+            forM_ receivedTxs $ \tx ->
+              -- TODO: logging on call-site of callback or make callback monadic
+              callback $ \chainState -> do
+                -- TODO: extract chain-specific st from chainState
+                let st = undefined chainState
+                case observeSomeTx (fromLedgerTx tx) st of
+                  -- TODO: pack chain-specific _st' into snd
+                  Just (onChainTx, _st') -> do
+                    Just (onChainTx, ChainState)
+                  Nothing ->
+                    Nothing
             pure clientStIdle
       , recvMsgRollBackward = \point _tip ->
           ChainSyncClient $ do
             traceWith tracer $ RolledBackward $ SomePoint point
             pure clientStIdle
       }
-
-  runOnChainTxs :: [ValidatedTx Era] -> m [OnChainTx Tx]
-  runOnChainTxs = fmap reverse . atomically . foldM runOnChainTx []
-
-  runOnChainTx :: [OnChainTx Tx] -> ValidatedTx Era -> STM m [OnChainTx Tx]
-  runOnChainTx observed (fromLedgerTx -> tx) = do
-    st <- readTVar headState
-    case observeSomeTx tx st of
-      Just (onChainTx, st') -> do
-        writeTVar headState st'
-        pure $ onChainTx : observed
-      Nothing ->
-        pure observed
 
 txSubmissionClient ::
   forall m.

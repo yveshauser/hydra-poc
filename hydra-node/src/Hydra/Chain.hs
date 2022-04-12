@@ -126,11 +126,26 @@ newtype Chain tx m = Chain
     -- given 'OnChainTx' event.
     --
     -- Does at least throw 'PostTxError'.
-    postTx :: MonadThrow m => PostChainTx tx -> m ()
+    postTx :: MonadThrow m => ChainState tx -> PostChainTx tx -> m ()
   }
 
 -- | Handle to interface observed transactions.
-type ChainCallback tx m = OnChainTx tx -> m ()
+-- NOTE: If one callback continuation produced a new ChainState, a further
+-- invocation right away might not yield that updated ChainState. This is
+-- because the event of observing a transaction (with some updated chain state)
+-- is handled as a first class event.
+type ChainCallback tx m = (ChainState tx -> Maybe (OnChainTx tx, ChainState tx)) -> m ()
 
 -- | A type tying both posting and observing transactions into a single /Component/.
 type ChainComponent tx m a = ChainCallback tx m -> (Chain tx m -> m a) -> m a
+
+-- TODO: This will be an existential or a type family containing chain-specific
+-- data required for `postTx` or in the `ChainCallback`
+data ChainState tx = ChainState
+  deriving (Eq, Show, Generic)
+
+instance Arbitrary (ChainState tx) where
+  arbitrary = pure ChainState
+
+deriving instance ToJSON (ChainState tx)
+deriving instance FromJSON (ChainState tx)

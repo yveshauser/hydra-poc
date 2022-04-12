@@ -5,10 +5,10 @@ module Main where
 import Hydra.Prelude
 
 import Hydra.API.Server (withAPIServer)
-import Hydra.Chain (Chain, ChainCallback)
+import Hydra.Chain (Chain, ChainCallback, ChainState (ChainState))
 import Hydra.Chain.Direct (withDirectChain)
 import Hydra.Chain.Direct.Util (readKeyPair, readVerificationKey)
-import Hydra.HeadLogic (Environment (..), Event (..))
+import Hydra.HeadLogic (Environment (..), Event (..), HeadState (ReadyState))
 import Hydra.Ledger.Cardano (Tx)
 import qualified Hydra.Ledger.Cardano as Ledger
 import Hydra.Ledger.Cardano.Configuration (
@@ -26,9 +26,12 @@ import Hydra.Network.Heartbeat (withHeartbeat)
 import Hydra.Network.Ouroboros (withIOManager, withOuroborosNetwork)
 import Hydra.Node (
   EventQueue (..),
+  HydraHead (..),
+  HydraNode (..),
   createEventQueue,
-  createHydraNode,
+  createHydraHead,
   initEnvironment,
+  queryHeadState,
   runHydraNode,
  )
 import Hydra.Options (ChainConfig (..), LedgerConfig (..), Options (..), parseHydraOptions)
@@ -40,13 +43,15 @@ main = do
   env@Environment{party} <- initEnvironment o
   withTracer verbosity $ \tracer' ->
     withMonitoring monitoringPort tracer' $ \tracer -> do
+      -- NOTE: Loading a head state from persistence could happen here.
+      hh <- createHydraHead ReadyState
       eq <- createEventQueue
-      withChain tracer party (putEvent eq . OnChainEvent) chainConfig $ \oc ->
+      withChain tracer party (chainCallback eq hh) chainConfig $ \oc ->
         withNetwork (contramap Network tracer) host port peers (putEvent eq . NetworkEvent) $ \hn ->
           withAPIServer apiHost apiPort party (contramap APIServer tracer) (putEvent eq . ClientEvent) $ \server -> do
             withCardanoLedger ledgerConfig $ \ledger -> do
-              node <- createHydraNode eq hn ledger oc server env
-              runHydraNode (contramap Node tracer) node
+              runHydraNode (contramap Node tracer) $
+                HydraNode{eq, hh, ledger, hn, oc, server, env}
  where
   withNetwork tracer host port peers =
     let localhost = Host{hostname = show host, port}
@@ -62,6 +67,14 @@ main = do
         <$> readJsonFileThrow protocolParametersFromJson (cardanoLedgerProtocolParametersFile ledgerConfig)
 
     action (Ledger.cardanoLedger globals ledgerEnv)
+
+  chainCallback eq hh cont = do
+    headState <- atomically $ queryHeadState hh
+    -- TODO: get chainState from headState
+    case cont (undefined headState) of
+      Nothing -> pure ()
+      Just (onChainTx, chainState') ->
+        putEvent eq $ OnChainEvent{chainState = chainState', onChainTx}
 
 withChain ::
   Tracer IO (HydraLog Tx net) ->
