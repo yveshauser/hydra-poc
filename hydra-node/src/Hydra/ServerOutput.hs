@@ -2,11 +2,12 @@
 
 module Hydra.ServerOutput where
 
+import Hydra.Prelude
+
 import Hydra.Chain (PostChainTx, PostTxError)
-import Hydra.Ledger (IsTx, TxIdType, UTxOType, ValidationError)
+import Hydra.Ledger (ChainState, IsTx, TxIdType, UTxOType, ValidationError)
 import Hydra.Network (Host)
 import Hydra.Party (MultiSigned, Party)
-import Hydra.Prelude
 import Hydra.Snapshot (Snapshot)
 
 data ServerOutput tx

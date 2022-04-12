@@ -49,6 +49,7 @@ import Data.Maybe.Strict (StrictMaybe (..))
 import qualified Data.Text as T
 import Data.Text.Lazy.Builder (toLazyText)
 import Formatting.Buildable (build)
+import Hydra.Chain.Direct.State (SomeOnChainHeadState)
 import qualified Hydra.Contract.Commit as Commit
 import qualified Hydra.Contract.Head as Head
 import qualified Hydra.Contract.Initial as Initial
@@ -120,6 +121,9 @@ instance IsTx Tx where
   type TxIdType Tx = TxId
   type UTxOType Tx = UTxO
   type ValueType Tx = Value
+
+  -- FIXME: this is really not the way we want to implement this
+  type ChainState Tx = SomeOnChainHeadState
 
   txId = getTxId . getTxBody
   balance = foldMap txOutValue

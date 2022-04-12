@@ -38,6 +38,9 @@ instance IsTx SimpleTx where
   type TxIdType SimpleTx = SimpleId
   type ValueType SimpleTx = Int
 
+  -- FIXME: Remove this when fixing Hydra.Ledger.Cardano
+  type ChainState SimpleTx = ()
+
   txId (SimpleTx tid _ _) = tid
   balance = Set.size
 

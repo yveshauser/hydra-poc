@@ -12,6 +12,7 @@ class
   , ToCBOR tx
   , FromJSON tx
   , ToJSON tx
+  , Arbitrary tx
   , --
     Eq (TxIdType tx)
   , Ord (TxIdType tx)
@@ -19,12 +20,14 @@ class
   , Typeable (TxIdType tx)
   , FromJSON (TxIdType tx)
   , ToJSON (TxIdType tx)
+  , Arbitrary (TxIdType tx)
   , --
     Eq (UTxOType tx)
   , Show (UTxOType tx)
   , FromJSON (UTxOType tx)
   , Monoid (UTxOType tx)
   , ToJSON (UTxOType tx)
+  , Arbitrary (UTxOType tx)
   ) =>
   IsTx tx
   where

@@ -134,14 +134,3 @@ type ChainCallback tx m = (ChainState tx -> Maybe (OnChainTx tx)) -> m ()
 
 -- | A type tying both posting and observing transactions into a single /Component/.
 type ChainComponent tx m a = ChainCallback tx m -> (Chain tx m -> m a) -> m a
-
--- TODO: This will be an existential or a type family containing chain-specific
--- data required for `postTx` or in the `ChainCallback`
-data ChainState tx = ChainState
-  deriving (Eq, Show, Generic)
-
-instance Arbitrary (ChainState tx) where
-  arbitrary = pure ChainState
-
-deriving instance ToJSON (ChainState tx)
-deriving instance FromJSON (ChainState tx)
