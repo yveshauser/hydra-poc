@@ -377,12 +377,7 @@ chainSyncClient tracer callback headState = \case
                 let st = undefined chainState
                 case observeSomeTx (fromLedgerTx tx) st of
                   Just (onChainTx, _st') -> do
-                    -- TODO: this is interesting.. onChainTx comes from
-                    -- Direct.Tx and st' comes from Direct.State -> If the
-                    -- low-level module already would know the ChainState, we
-                    -- could be done with it? However it likely won't, so the
-                    -- type of observeCommitTx et al can't be OnChainTx (when
-                    -- that one includes the ChainState).
+                    -- TODO: Hydra.Direct.State would store st' now in onChainTx as chainState.
                     Just onChainTx
                   Nothing ->
                     Nothing

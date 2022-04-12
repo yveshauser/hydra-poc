@@ -38,10 +38,19 @@ import Hydra.Prelude
 
 import qualified Cardano.Api.UTxO as UTxO
 import qualified Data.Map as Map
-import Hydra.Chain (HeadId (..), HeadParameters, OnChainTx (..), PostTxError (..))
+import Hydra.Chain (
+  ChainState (..),
+  HeadId (..),
+  HeadParameters,
+  OnChainTx (..),
+  PostTxError (..),
+ )
 import Hydra.Chain.Direct.Tx (
+  AbortObservation (..),
   CloseObservation (..),
   CollectComObservation (..),
+  CommitObservation (..),
+  FanoutObservation (..),
   InitObservation (..),
   abortTx,
   closeTx,
@@ -321,8 +330,16 @@ instance HasTransition 'StIdle where
 instance ObserveTx 'StIdle 'StInitialized where
   observeTx tx OnChainHeadState{networkId, peerVerificationKeys, ownParty, ownVerificationKey} = do
     let allVerificationKeys = ownVerificationKey : peerVerificationKeys
-    (event, observation) <- observeInitTx networkId allVerificationKeys ownParty tx
-    let InitObservation{threadOutput, initials, commits, headId, headTokenScript} = observation
+    observation <- observeInitTx networkId allVerificationKeys ownParty tx
+    let InitObservation
+          { threadOutput
+          , initials
+          , commits
+          , headId
+          , headTokenScript
+          , contestationPeriod
+          , parties
+          } = observation
     let st' =
           OnChainHeadState
             { networkId
@@ -338,7 +355,14 @@ instance ObserveTx 'StIdle 'StInitialized where
                   , initialHeadTokenScript = headTokenScript
                   }
             }
-    pure (event, st')
+    pure
+      ( OnInitTx
+          { chainState = ChainState -- TODO: use st' as ChainState
+          , contestationPeriod
+          , parties
+          }
+      , st'
+      )
 
 --
 -- StInitialized
@@ -354,7 +378,7 @@ instance HasTransition 'StInitialized where
 instance ObserveTx 'StInitialized 'StInitialized where
   observeTx tx st@OnChainHeadState{networkId, stateMachine} = do
     let initials = fst3 <$> initialInitials
-    (event, newCommit) <- observeCommitTx networkId initials tx
+    CommitObservation{newCommit, party, committed} <- observeCommitTx networkId initials tx
     let st' =
           st
             { stateMachine =
@@ -367,7 +391,14 @@ instance ObserveTx 'StInitialized 'StInitialized where
                       newCommit : initialCommits
                   }
             }
-    pure (event, st')
+    pure
+      ( OnCommitTx
+          { chainState = ChainState -- TODO: use st' as ChainState
+          , party
+          , committed
+          }
+      , st'
+      )
    where
     Initialized
       { initialCommits
@@ -377,7 +408,7 @@ instance ObserveTx 'StInitialized 'StInitialized where
 instance ObserveTx 'StInitialized 'StOpen where
   observeTx tx st@OnChainHeadState{networkId, peerVerificationKeys, ownVerificationKey, ownParty, stateMachine} = do
     let utxo = getKnownUTxO st
-    (event, observation) <- observeCollectComTx utxo tx
+    observation <- observeCollectComTx utxo tx
     let CollectComObservation{threadOutput, headId} = observation
     guard (headId == initialHeadId)
     let st' =
@@ -393,7 +424,12 @@ instance ObserveTx 'StInitialized 'StOpen where
                   , openHeadTokenScript = initialHeadTokenScript
                   }
             }
-    pure (event, st')
+    pure
+      ( OnCollectComTx
+          { chainState = ChainState -- TODO: use st' as ChainState
+          }
+      , st'
+      )
    where
     Initialized
       { initialHeadId
@@ -403,7 +439,7 @@ instance ObserveTx 'StInitialized 'StOpen where
 instance ObserveTx 'StInitialized 'StIdle where
   observeTx tx st@OnChainHeadState{networkId, peerVerificationKeys, ownVerificationKey, ownParty} = do
     let utxo = getKnownUTxO st
-    (event, ()) <- observeAbortTx utxo tx
+    AbortObservation <- observeAbortTx utxo tx
     let st' =
           OnChainHeadState
             { networkId
@@ -412,7 +448,12 @@ instance ObserveTx 'StInitialized 'StIdle where
             , ownParty
             , stateMachine = Idle
             }
-    pure (event, st')
+    pure
+      ( OnAbortTx
+          { chainState = ChainState -- TODO: use st' as ChainState?
+          }
+      , st'
+      )
 
 --
 -- StOpen
@@ -426,8 +467,7 @@ instance HasTransition 'StOpen where
 instance ObserveTx 'StOpen 'StClosed where
   observeTx tx st@OnChainHeadState{networkId, peerVerificationKeys, ownVerificationKey, ownParty, stateMachine} = do
     let utxo = getKnownUTxO st
-    (event, observation) <- observeCloseTx utxo tx
-    let CloseObservation{threadOutput, headId} = observation
+    CloseObservation{threadOutput, headId, snapshotNumber} <- observeCloseTx utxo tx
     guard (headId == openHeadId)
     let st' =
           OnChainHeadState
@@ -442,7 +482,13 @@ instance ObserveTx 'StOpen 'StClosed where
                   , closedHeadTokenScript = openHeadTokenScript
                   }
             }
-    pure (event, st')
+    pure
+      ( OnCloseTx
+          { chainState = ChainState -- TODO: use st' as ChainState
+          , snapshotNumber
+          }
+      , st'
+      )
    where
     Open
       { openHeadId
@@ -461,7 +507,7 @@ instance HasTransition 'StClosed where
 instance ObserveTx 'StClosed 'StIdle where
   observeTx tx st@OnChainHeadState{networkId, peerVerificationKeys, ownVerificationKey, ownParty} = do
     let utxo = getKnownUTxO st
-    (event, ()) <- observeFanoutTx utxo tx
+    FanoutObservation <- observeFanoutTx utxo tx
     let st' =
           OnChainHeadState
             { networkId
@@ -470,7 +516,12 @@ instance ObserveTx 'StClosed 'StIdle where
             , ownParty
             , stateMachine = Idle
             }
-    pure (event, st')
+    pure
+      ( OnFanoutTx
+          { chainState = ChainState -- TODO: use st' as ChainState?
+          }
+      , st'
+      )
 
 -- | A convenient way to apply transition to 'SomeOnChainHeadState' without
 -- bothering about the internal details.
