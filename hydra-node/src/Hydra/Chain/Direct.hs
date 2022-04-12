@@ -62,6 +62,7 @@ import Hydra.Chain (
   Chain (..),
   ChainCallback,
   ChainComponent,
+  ChainState (ChainState),
   OnChainTx (..),
   PostChainTx (..),
   PostTxError (..),
@@ -181,6 +182,7 @@ withDirectChain tracer networkId iocp socketPath keyPair party cardanoKeys point
             action $
               Chain
                 { postTx = \tx -> do
+                    -- NOTE: trace would include full ChainState!
                     traceWith tracer $ ToPost tx
                     -- XXX(SN): 'finalizeTx' retries until a payment utxo is
                     -- found. See haddock for details
@@ -368,29 +370,28 @@ chainSyncClient tracer callback headState = \case
       { recvMsgRollForward = \blk _tip -> do
           ChainSyncClient $ do
             let receivedTxs = toList $ getAlonzoTxs blk
-            onChainTxs <- runOnChainTxs receivedTxs
-            unless (null receivedTxs) $
-              traceWith tracer $ ReceivedTxs{onChainTxs, receivedTxs = map (\tx -> (getTxId tx, tx)) receivedTxs}
-            mapM_ callback onChainTxs
+            forM_ receivedTxs $ \tx ->
+              -- TODO: logging on call-site of callback or make callback monadic
+              callback $ \chainState -> do
+                -- TODO: extract chain-specific st from chainState
+                let st = undefined chainState
+                case observeSomeTx (fromLedgerTx tx) st of
+                  Just (onChainTx, _st') -> do
+                    -- TODO: this is interesting.. onChainTx comes from
+                    -- Direct.Tx and st' comes from Direct.State -> If the
+                    -- low-level module already would know the ChainState, we
+                    -- could be done with it? However it likely won't, so the
+                    -- type of observeCommitTx et al can't be OnChainTx (when
+                    -- that one includes the ChainState).
+                    Just onChainTx
+                  Nothing ->
+                    Nothing
             pure clientStIdle
       , recvMsgRollBackward = \point _tip ->
           ChainSyncClient $ do
             traceWith tracer $ RolledBackward $ SomePoint point
             pure clientStIdle
       }
-
-  runOnChainTxs :: [ValidatedTx Era] -> m [OnChainTx Tx]
-  runOnChainTxs = fmap reverse . atomically . foldM runOnChainTx []
-
-  runOnChainTx :: [OnChainTx Tx] -> ValidatedTx Era -> STM m [OnChainTx Tx]
-  runOnChainTx observed (fromLedgerTx -> tx) = do
-    st <- readTVar headState
-    case observeSomeTx tx st of
-      Just (onChainTx, st') -> do
-        writeTVar headState st'
-        pure $ onChainTx : observed
-      Nothing ->
-        pure observed
 
 txSubmissionClient ::
   forall m.
@@ -484,6 +485,7 @@ fromPostChainTx ::
   PostChainTx Tx ->
   STM m Tx
 fromPostChainTx cardanoKeys wallet someHeadState tx = do
+  -- TODO: use this existential as 'ChainState tx'
   SomeOnChainHeadState st <- readTVar someHeadState
   case (tx, reifyState st) of
     (InitTx params, TkIdle) -> do

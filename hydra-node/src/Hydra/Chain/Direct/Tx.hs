@@ -17,7 +17,7 @@ import Hydra.Prelude
 import qualified Cardano.Api.UTxO as UTxO
 import Cardano.Binary (decodeFull', serialize')
 import qualified Data.Map as Map
-import Hydra.Chain (HeadId (..), HeadParameters (..), OnChainTx (..))
+import Hydra.Chain (ChainState (ChainState), HeadId (..), HeadParameters (..), OnChainTx (..))
 import qualified Hydra.Contract.Commit as Commit
 import qualified Hydra.Contract.Head as Head
 import qualified Hydra.Contract.HeadState as Head
@@ -417,7 +417,11 @@ observeInitTx networkId cardanoKeys party tx = do
   guard $ sort expectedNames == sort actualNames
   headTokenScript <- findScriptMinting tx headTokenPolicyId
   pure
-    ( OnInitTx cperiod parties
+    ( OnInitTx
+        { chainState = ChainState -- TODO: what would ChainState be?
+        , contestationPeriod = cperiod
+        , parties
+        }
     , InitObservation
         { threadOutput =
             ( mkTxIn tx ix
@@ -497,7 +501,12 @@ observeCommitTx networkId initials tx = do
       (Nothing, Just{}) -> error "found commit with no redeemer out ref but with serialized output."
       (Just{}, Nothing) -> error "found commit with redeemer out ref but with no serialized output."
 
-  let onChainTx = OnCommitTx (convertParty party) comittedUTxO
+  let onChainTx =
+        OnCommitTx
+          { chainState = ChainState -- TODO: what would ChainState be?
+          , party = convertParty party
+          , committed = comittedUTxO
+          }
   pure
     ( onChainTx
     , (commitIn, toUTxOContext commitOut, dat)
@@ -556,6 +565,8 @@ observeCollectComTx utxo tx = do
       newHeadDatum <- lookupScriptData tx newHeadOutput
       pure
         ( OnCollectComTx
+            { chainState = ChainState -- TODO: what would ChainState be?
+            }
         , CollectComObservation
             { threadOutput =
                 ( newHeadInput
@@ -595,7 +606,10 @@ observeCloseTx utxo tx = do
       newHeadDatum <- lookupScriptData tx newHeadOutput
       snapshotNumber <- integerToNatural onChainSnapshotNumber
       pure
-        ( OnCloseTx{snapshotNumber}
+        ( OnCloseTx
+            { chainState = ChainState -- TODO: what would ChainState be?
+            , snapshotNumber
+            }
         , CloseObservation
             { threadOutput =
                 ( newHeadInput
@@ -627,7 +641,13 @@ observeFanoutTx utxo tx = do
   headInput <- fst <$> findScriptOutput @PlutusScriptV1 utxo headScript
   findRedeemerSpending tx headInput
     >>= \case
-      Head.Fanout{} -> pure (OnFanoutTx, ())
+      Head.Fanout{} ->
+        pure
+          ( OnFanoutTx
+              { chainState = ChainState -- TODO: what would ChainState be?
+              }
+          , ()
+          )
       _ -> Nothing
  where
   headScript = fromPlutusScript Head.validatorScript
@@ -645,7 +665,13 @@ observeAbortTx ::
 observeAbortTx utxo tx = do
   headInput <- fst <$> findScriptOutput @PlutusScriptV1 utxo headScript
   findRedeemerSpending tx headInput >>= \case
-    Head.Abort -> pure (OnAbortTx, ())
+    Head.Abort ->
+      pure
+        ( OnAbortTx
+            { chainState = ChainState -- TODO: what would ChainState be?
+            }
+        , ()
+        )
     _ -> Nothing
  where
   headScript = fromPlutusScript Head.validatorScript

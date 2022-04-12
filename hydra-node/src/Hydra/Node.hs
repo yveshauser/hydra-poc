@@ -1,4 +1,5 @@
 {-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 -- | Top-level module to run a single Hydra node.
@@ -31,7 +32,7 @@ import Control.Monad.Class.MonadSTM (
   writeTQueue,
  )
 import Hydra.API.Server (Server, sendOutput)
-import Hydra.Chain (Chain (..), OnChainTx, PostTxError)
+import Hydra.Chain (Chain (..), ChainState (ChainState), OnChainTx, PostTxError)
 import Hydra.ClientInput (ClientInput)
 import Hydra.HeadLogic (
   Effect (..),
@@ -87,6 +88,7 @@ data HydraNode tx m = HydraNode
   { eq :: EventQueue m (Event tx)
   , hn :: Network m (Message tx)
   , hh :: HydraHead tx m
+  , ledger :: Ledger tx
   , oc :: Chain tx m
   , server :: Server tx m
   , env :: Environment
@@ -112,21 +114,21 @@ instance (Arbitrary tx, Arbitrary (UTxOType tx), Arbitrary (TxIdType tx)) => Arb
 createHydraNode ::
   MonadSTM m =>
   EventQueue m (Event tx) ->
-  Network m (Message tx) ->
+  HydraHead tx m ->
   Ledger tx ->
+  Network m (Message tx) ->
   Chain tx m ->
   Server tx m ->
   Environment ->
   m (HydraNode tx m)
-createHydraNode eq hn ledger oc server env = do
-  hh <- createHydraHead ReadyState ledger
-  pure HydraNode{eq, hn, hh, oc, server, env}
+createHydraNode eq hh ledger hn oc server env = do
+  pure HydraNode{eq, hn, ledger, hh, oc, server, env}
 
 handleClientInput :: HydraNode tx m -> ClientInput tx -> m ()
 handleClientInput HydraNode{eq} = putEvent eq . ClientEvent
 
 handleChainTx :: HydraNode tx m -> OnChainTx tx -> m ()
-handleChainTx HydraNode{eq} = putEvent eq . OnChainEvent
+handleChainTx HydraNode{eq} onChainTx = putEvent eq OnChainEvent{onChainTx}
 
 handleMessage :: HydraNode tx m -> Message tx -> m ()
 handleMessage HydraNode{eq} = putEvent eq . NetworkEvent
@@ -170,9 +172,9 @@ processNextEvent ::
   HydraNode tx m ->
   Event tx ->
   STM m (Either (LogicError tx) [Effect tx])
-processNextEvent HydraNode{hh, env} e =
+processNextEvent HydraNode{hh, ledger, env} e =
   modifyHeadState hh $ \s ->
-    case Logic.update env (ledger hh) s e of
+    case Logic.update env ledger s e of
       NewState s' effects ->
         let (s'', effects') = emitSnapshot env effects s'
          in (Right effects', s'')
@@ -196,6 +198,7 @@ processEffect HydraNode{hn, oc, server, eq, env = Environment{party}} tracer e =
     OnChainEffect postChainTx ->
       postTx oc postChainTx
         `catch` \(postTxError :: PostTxError tx) ->
+          -- NOTE: postChainTx would include the full ChainState!
           putEvent eq $ PostTxError{postChainTx, postTxError}
     Delay delay _ event -> putEventAfter eq delay event
   traceWith tracer $ ProcessedEffect party e
@@ -241,7 +244,6 @@ createEventQueue = do
 -- | Handle to access and modify a Hydra Head's state.
 data HydraHead tx m = HydraHead
   { modifyHeadState :: forall a. (HeadState tx -> (a, HeadState tx)) -> STM m a
-  , ledger :: Ledger tx
   }
 
 queryHeadState :: HydraHead tx m -> STM m (HeadState tx)
@@ -251,7 +253,7 @@ putState :: HydraHead tx m -> HeadState tx -> STM m ()
 putState HydraHead{modifyHeadState} new =
   modifyHeadState $ const ((), new)
 
-createHydraHead :: MonadSTM m => HeadState tx -> Ledger tx -> m (HydraHead tx m)
-createHydraHead initialState ledger = do
+createHydraHead :: MonadSTM m => HeadState tx -> m (HydraHead tx m)
+createHydraHead initialState = do
   tv <- newTVarIO initialState
-  pure HydraHead{modifyHeadState = stateTVar tv, ledger}
+  pure HydraHead{modifyHeadState = stateTVar tv}

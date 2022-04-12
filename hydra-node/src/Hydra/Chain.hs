@@ -38,12 +38,12 @@ type ContestationPeriod = DiffTime
 -- construct corresponding Head protocol transactions.
 data PostChainTx tx
   = InitTx {headParameters :: HeadParameters}
-  | CommitTx {party :: Party, committed :: UTxOType tx}
-  | AbortTx {utxo :: UTxOType tx}
-  | CollectComTx {utxo :: UTxOType tx}
-  | CloseTx {confirmedSnapshot :: ConfirmedSnapshot tx}
-  | ContestTx {snapshot :: Snapshot tx}
-  | FanoutTx {utxo :: UTxOType tx}
+  | CommitTx {chainState :: ChainState tx, party :: Party, committed :: UTxOType tx}
+  | AbortTx {chainState :: ChainState tx, utxo :: UTxOType tx}
+  | CollectComTx {chainState :: ChainState tx, utxo :: UTxOType tx}
+  | CloseTx {chainState :: ChainState tx, confirmedSnapshot :: ConfirmedSnapshot tx}
+  | ContestTx {chainState :: ChainState tx, snapshot :: Snapshot tx}
+  | FanoutTx {chainState :: ChainState tx, utxo :: UTxOType tx}
   deriving stock (Generic)
 
 deriving instance IsTx tx => Eq (PostChainTx tx)
@@ -76,13 +76,13 @@ instance Arbitrary HeadId where
 -- | Describes transactions as seen on chain. Holds as minimal information as
 -- possible to simplify observing the chain.
 data OnChainTx tx
-  = OnInitTx {contestationPeriod :: ContestationPeriod, parties :: [Party]}
-  | OnCommitTx {party :: Party, committed :: UTxOType tx}
-  | OnAbortTx
-  | OnCollectComTx
-  | OnCloseTx {snapshotNumber :: SnapshotNumber}
-  | OnContestTx
-  | OnFanoutTx
+  = OnInitTx {chainState :: ChainState tx, contestationPeriod :: ContestationPeriod, parties :: [Party]}
+  | OnCommitTx {chainState :: ChainState tx, party :: Party, committed :: UTxOType tx}
+  | OnAbortTx {chainState :: ChainState tx}
+  | OnCollectComTx {chainState :: ChainState tx}
+  | OnCloseTx {chainState :: ChainState tx, snapshotNumber :: SnapshotNumber}
+  | OnContestTx {chainState :: ChainState tx}
+  | OnFanoutTx {chainState :: ChainState tx}
   deriving (Generic)
 
 deriving instance IsTx tx => Eq (OnChainTx tx)
@@ -130,7 +130,18 @@ newtype Chain tx m = Chain
   }
 
 -- | Handle to interface observed transactions.
-type ChainCallback tx m = OnChainTx tx -> m ()
+type ChainCallback tx m = (ChainState tx -> Maybe (OnChainTx tx)) -> m ()
 
 -- | A type tying both posting and observing transactions into a single /Component/.
 type ChainComponent tx m a = ChainCallback tx m -> (Chain tx m -> m a) -> m a
+
+-- TODO: This will be an existential or a type family containing chain-specific
+-- data required for `postTx` or in the `ChainCallback`
+data ChainState tx = ChainState
+  deriving (Eq, Show, Generic)
+
+instance Arbitrary (ChainState tx) where
+  arbitrary = pure ChainState
+
+deriving instance ToJSON (ChainState tx)
+deriving instance FromJSON (ChainState tx)
