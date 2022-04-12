@@ -15,12 +15,11 @@ import Data.List (elemIndex, (\\))
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import GHC.Records (getField)
-import Hydra.Chain (ChainState, HeadParameters (..), OnChainTx (..), PostChainTx (..), PostTxError)
+import Hydra.Chain (ChainState, HasChainState, HeadParameters (..), OnChainTx (..), PostChainTx (..), PostTxError)
 import Hydra.ClientInput (ClientInput (..))
 import Hydra.Ledger (
   IsTx,
   Ledger,
-  TxIdType,
   UTxOType,
   ValidationError,
   ValidationResult (Invalid, Valid),
@@ -38,10 +37,14 @@ data Event tx
   | OnChainEvent {onChainTx :: OnChainTx tx}
   | ShouldPostFanout
   | PostTxError {postChainTx :: PostChainTx tx, postTxError :: PostTxError tx}
-  deriving stock (Eq, Show, Generic)
-  deriving anyclass (ToJSON, FromJSON)
+  deriving stock (Generic)
 
-instance IsTx tx => Arbitrary (Event tx) where
+deriving instance (IsTx tx, HasChainState tx) => Eq (Event tx)
+deriving instance (IsTx tx, HasChainState tx) => Show (Event tx)
+deriving instance (IsTx tx, HasChainState tx) => ToJSON (Event tx)
+deriving instance (IsTx tx, HasChainState tx) => FromJSON (Event tx)
+
+instance (IsTx tx, HasChainState tx) => Arbitrary (Event tx) where
   arbitrary = genericArbitrary
 
 data Effect tx
@@ -51,13 +54,13 @@ data Effect tx
   | Delay {delay :: DiffTime, reason :: WaitReason, event :: Event tx}
   deriving stock (Generic)
 
-instance IsTx tx => Arbitrary (Effect tx) where
+instance (IsTx tx, HasChainState tx) => Arbitrary (Effect tx) where
   arbitrary = genericArbitrary
 
-deriving instance IsTx tx => Eq (Effect tx)
-deriving instance IsTx tx => Show (Effect tx)
-deriving instance IsTx tx => ToJSON (Effect tx)
-deriving instance IsTx tx => FromJSON (Effect tx)
+deriving instance (IsTx tx, HasChainState tx) => Eq (Effect tx)
+deriving instance (IsTx tx, HasChainState tx) => Show (Effect tx)
+deriving instance (IsTx tx, HasChainState tx) => ToJSON (Effect tx)
+deriving instance (IsTx tx, HasChainState tx) => FromJSON (Effect tx)
 
 data HeadState tx
   = ReadyState
@@ -80,13 +83,20 @@ data HeadState tx
       }
   deriving stock (Generic)
 
-instance IsTx tx => Arbitrary (HeadState tx) where
+instance (IsTx tx, HasChainState tx) => Arbitrary (HeadState tx) where
   arbitrary = genericArbitrary
 
-deriving instance IsTx tx => Eq (HeadState tx)
-deriving instance IsTx tx => Show (HeadState tx)
-deriving instance IsTx tx => ToJSON (HeadState tx)
-deriving instance IsTx tx => FromJSON (HeadState tx)
+deriving instance (IsTx tx, HasChainState tx) => Eq (HeadState tx)
+deriving instance (IsTx tx, HasChainState tx) => Show (HeadState tx)
+deriving instance (IsTx tx, HasChainState tx) => ToJSON (HeadState tx)
+deriving instance (IsTx tx, HasChainState tx) => FromJSON (HeadState tx)
+
+chainStateFromHeadState :: HeadState tx -> Maybe (ChainState tx)
+chainStateFromHeadState = \case
+  ReadyState -> Nothing
+  InitialState{chainState} -> Just chainState
+  OpenState{chainState} -> Just chainState
+  ClosedState{chainState} -> Just chainState
 
 type Committed tx = Map Party (UTxOType tx)
 
@@ -135,23 +145,22 @@ data LogicError tx
   | LedgerError ValidationError
   deriving stock (Generic)
 
-instance IsTx tx => Exception (LogicError tx)
-
-instance IsTx tx => Arbitrary (LogicError tx) where
-  arbitrary = genericArbitrary
-
-deriving instance IsTx tx => ToJSON (LogicError tx)
-deriving instance IsTx tx => FromJSON (LogicError tx)
 deriving instance (Eq (HeadState tx), Eq (Event tx)) => Eq (LogicError tx)
 deriving instance (Show (HeadState tx), Show (Event tx)) => Show (LogicError tx)
+deriving instance (IsTx tx, HasChainState tx) => Exception (LogicError tx)
+deriving instance (IsTx tx, HasChainState tx) => ToJSON (LogicError tx)
+deriving instance (IsTx tx, HasChainState tx) => FromJSON (LogicError tx)
+
+instance (IsTx tx, HasChainState tx) => Arbitrary (LogicError tx) where
+  arbitrary = genericArbitrary
 
 data Outcome tx
   = NewState (HeadState tx) [Effect tx]
   | Wait WaitReason
   | Error (LogicError tx)
 
-deriving instance IsTx tx => Eq (Outcome tx)
-deriving instance IsTx tx => Show (Outcome tx)
+deriving instance (IsTx tx, HasChainState tx) => Eq (Outcome tx)
+deriving instance (IsTx tx, HasChainState tx) => Show (Outcome tx)
 
 data WaitReason
   = WaitOnNotApplicableTx {validationError :: ValidationError}
@@ -406,11 +415,12 @@ newSn Environment{party} parameters CoordinatedHeadState{confirmedSnapshot, seen
 
 emitSnapshot :: IsTx tx => Environment -> [Effect tx] -> HeadState tx -> (HeadState tx, [Effect tx])
 emitSnapshot env@Environment{party} effects = \case
-  st@OpenState{parameters, coordinatedHeadState} ->
+  st@OpenState{chainState, parameters, coordinatedHeadState} ->
     case newSn env parameters coordinatedHeadState of
       ShouldSnapshot sn txs ->
         ( OpenState
-            { parameters
+            { chainState
+            , parameters
             , coordinatedHeadState = coordinatedHeadState{seenSnapshot = RequestedSnapshot}
             }
         , NetworkEffect (ReqSn party sn txs) : effects

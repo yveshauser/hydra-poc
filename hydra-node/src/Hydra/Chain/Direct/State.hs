@@ -39,7 +39,7 @@ import Hydra.Prelude
 import qualified Cardano.Api.UTxO as UTxO
 import qualified Data.Map as Map
 import Hydra.Chain (
-  ChainState (..),
+  ChainState,
   HeadId (..),
   HeadParameters,
   OnChainTx (..),
@@ -134,6 +134,8 @@ getKnownUTxO OnChainHeadState{stateMachine} =
 
 -- Working with opaque states
 
+type instance ChainState Tx = SomeOnChainHeadState
+
 -- | An existential wrapping /some/ 'OnChainHeadState' into a value that carry
 -- no type-level information about the state.
 data SomeOnChainHeadState where
@@ -142,6 +144,20 @@ data SomeOnChainHeadState where
     HasTransition st =>
     OnChainHeadState st ->
     SomeOnChainHeadState
+
+deriving instance Show SomeOnChainHeadState
+
+instance Eq SomeOnChainHeadState where
+  (==) = undefined -- TODO: we eventually want to compare chain states, no?
+
+instance Arbitrary SomeOnChainHeadState where
+  arbitrary = undefined -- TODO: this would be handy (and required when using it along the head state)
+
+instance ToJSON SomeOnChainHeadState where
+  toJSON = undefined -- TODO: this is required now, how to define it for thes fancy types?
+
+instance FromJSON SomeOnChainHeadState where
+  parseJSON = undefined -- TODO: this is required now, how to define it for thes fancy types?
 
 -- | Some Kind for witnessing Hydra state-machine's states at the type-level.
 --
@@ -357,7 +373,7 @@ instance ObserveTx 'StIdle 'StInitialized where
             }
     pure
       ( OnInitTx
-          { chainState = ChainState -- TODO: use st' as ChainState
+          { chainState = SomeOnChainHeadState st'
           , contestationPeriod
           , parties
           }
@@ -393,7 +409,7 @@ instance ObserveTx 'StInitialized 'StInitialized where
             }
     pure
       ( OnCommitTx
-          { chainState = ChainState -- TODO: use st' as ChainState
+          { chainState = SomeOnChainHeadState st'
           , party
           , committed
           }
@@ -426,7 +442,7 @@ instance ObserveTx 'StInitialized 'StOpen where
             }
     pure
       ( OnCollectComTx
-          { chainState = ChainState -- TODO: use st' as ChainState
+          { chainState = SomeOnChainHeadState st'
           }
       , st'
       )
@@ -450,7 +466,7 @@ instance ObserveTx 'StInitialized 'StIdle where
             }
     pure
       ( OnAbortTx
-          { chainState = ChainState -- TODO: use st' as ChainState?
+          { chainState = SomeOnChainHeadState st'
           }
       , st'
       )
@@ -484,7 +500,7 @@ instance ObserveTx 'StOpen 'StClosed where
             }
     pure
       ( OnCloseTx
-          { chainState = ChainState -- TODO: use st' as ChainState
+          { chainState = SomeOnChainHeadState st'
           , snapshotNumber
           }
       , st'
@@ -518,7 +534,7 @@ instance ObserveTx 'StClosed 'StIdle where
             }
     pure
       ( OnFanoutTx
-          { chainState = ChainState -- TODO: use st' as ChainState?
+          { chainState = (SomeOnChainHeadState st' :: ChainState Tx)
           }
       , st'
       )

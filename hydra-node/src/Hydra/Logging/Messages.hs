@@ -11,8 +11,9 @@ module Hydra.Logging.Messages where
 import Hydra.Prelude
 
 import Hydra.API.Server (APIServerLog)
+import Hydra.Chain (HasChainState)
 import Hydra.Chain.Direct (DirectChainLog)
-import Hydra.Ledger (TxIdType, UTxOType)
+import Hydra.Ledger (IsTx, TxIdType, UTxOType)
 import Hydra.Node (HydraNodeLog)
 
 data HydraLog tx net
@@ -20,16 +21,18 @@ data HydraLog tx net
   | APIServer {api :: APIServerLog}
   | Network {network :: net}
   | Node {node :: HydraNodeLog tx}
-  deriving stock (Eq, Show, Generic)
-  deriving anyclass (ToJSON)
+  deriving (Generic)
+
+deriving instance (IsTx tx, HasChainState tx, Eq net) => Eq (HydraLog tx net)
+deriving instance (IsTx tx, HasChainState tx, Show net) => Show (HydraLog tx net)
+deriving instance (IsTx tx, HasChainState tx, ToJSON net) => ToJSON (HydraLog tx net)
 
 instance
   ( Arbitrary net
-  , Arbitrary tx
   , Arbitrary DirectChainLog
-  , Arbitrary (UTxOType tx)
-  , Arbitrary (TxIdType tx)
   , Arbitrary APIServerLog
+  , IsTx tx
+  , HasChainState tx
   ) =>
   Arbitrary (HydraLog tx net)
   where

@@ -4,8 +4,8 @@ module Hydra.ServerOutput where
 
 import Hydra.Prelude
 
-import Hydra.Chain (PostChainTx, PostTxError)
-import Hydra.Ledger (ChainState, IsTx, TxIdType, UTxOType, ValidationError)
+import Hydra.Chain (ChainState, HasChainState, PostChainTx, PostTxError)
+import Hydra.Ledger (IsTx, UTxOType, ValidationError)
 import Hydra.Network (Host)
 import Hydra.Party (MultiSigned, Party)
 import Hydra.Snapshot (Snapshot)
@@ -36,12 +36,14 @@ data ServerOutput tx
   | PostTxOnChainFailed {postChainTx :: PostChainTx tx, postTxError :: PostTxError tx}
   deriving (Generic)
 
-deriving instance IsTx tx => Eq (ServerOutput tx)
-deriving instance IsTx tx => Show (ServerOutput tx)
-deriving instance IsTx tx => ToJSON (ServerOutput tx)
-deriving instance IsTx tx => FromJSON (ServerOutput tx)
+-- TODO: Requiring the constraints on ChainState is odd here, can we convince
+-- GHC to maybe only require Eq (PostChainTx tx) here?
+deriving instance (IsTx tx, Eq (ChainState tx)) => Eq (ServerOutput tx)
+deriving instance (IsTx tx, Show (ChainState tx)) => Show (ServerOutput tx)
+deriving instance (IsTx tx, ToJSON (ChainState tx)) => ToJSON (ServerOutput tx)
+deriving instance (IsTx tx, FromJSON (ChainState tx)) => FromJSON (ServerOutput tx)
 
-instance (Arbitrary tx, Arbitrary (UTxOType tx), Arbitrary (TxIdType tx)) => Arbitrary (ServerOutput tx) where
+instance (IsTx tx, HasChainState tx) => Arbitrary (ServerOutput tx) where
   arbitrary = genericArbitrary
 
   -- NOTE: See note on 'Arbitrary (ClientInput tx)'

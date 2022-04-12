@@ -32,7 +32,7 @@ import Control.Monad.Class.MonadSTM (
   writeTQueue,
  )
 import Hydra.API.Server (Server, sendOutput)
-import Hydra.Chain (Chain (..), ChainState (ChainState), OnChainTx, PostTxError)
+import Hydra.Chain (Chain (..), ChainState, HasChainState, OnChainTx, PostTxError)
 import Hydra.ClientInput (ClientInput)
 import Hydra.HeadLogic (
   Effect (..),
@@ -105,10 +105,13 @@ data HydraNodeLog tx
   | ProcessedEvent {by :: Party, event :: Event tx}
   | ProcessingEffect {by :: Party, effect :: Effect tx}
   | ProcessedEffect {by :: Party, effect :: Effect tx}
-  deriving stock (Eq, Show, Generic)
-  deriving anyclass (ToJSON, FromJSON)
+  deriving stock (Generic)
 
-instance (Arbitrary tx, Arbitrary (UTxOType tx), Arbitrary (TxIdType tx)) => Arbitrary (HydraNodeLog tx) where
+deriving instance (IsTx tx, HasChainState tx) => Eq (HydraNodeLog tx)
+deriving instance (IsTx tx, HasChainState tx) => Show (HydraNodeLog tx)
+deriving instance (IsTx tx, HasChainState tx) => ToJSON (HydraNodeLog tx)
+
+instance (IsTx tx, HasChainState tx) => Arbitrary (HydraNodeLog tx) where
   arbitrary = genericArbitrary
 
 createHydraNode ::
@@ -136,8 +139,9 @@ handleMessage HydraNode{eq} = putEvent eq . NetworkEvent
 runHydraNode ::
   ( MonadThrow m
   , MonadAsync m
-  , IsTx tx
   , MonadCatch m
+  , IsTx tx
+  , HasChainState tx
   ) =>
   Tracer m (HydraNodeLog tx) ->
   HydraNode tx m ->
@@ -150,8 +154,9 @@ runHydraNode tracer node =
 stepHydraNode ::
   ( MonadThrow m
   , MonadAsync m
-  , IsTx tx
   , MonadCatch m
+  , IsTx tx
+  , HasChainState tx
   ) =>
   Tracer m (HydraNodeLog tx) ->
   HydraNode tx m ->
@@ -185,6 +190,7 @@ processEffect ::
   ( MonadAsync m
   , MonadCatch m
   , IsTx tx
+  , HasChainState tx
   ) =>
   HydraNode tx m ->
   Tracer m (HydraNodeLog tx) ->

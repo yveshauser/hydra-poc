@@ -27,17 +27,14 @@ import qualified Cardano.Ledger.Shelley.API as Ledger
 import Cardano.Ledger.Shelley.Rules.Ledger (LedgerPredicateFailure (UtxowFailure))
 import Cardano.Ledger.Shelley.Rules.Utxow (UtxowPredicateFailure (UtxoFailure))
 import Control.Exception (IOException)
-import Control.Monad (foldM)
 import Control.Monad.Class.MonadSTM (
   newEmptyTMVar,
   newTQueueIO,
-  newTVarIO,
   putTMVar,
   readTQueue,
   retry,
   takeTMVar,
   writeTQueue,
-  writeTVar,
  )
 import Control.Monad.Class.MonadTimer (timeout)
 import Control.Tracer (nullTracer)
@@ -62,10 +59,10 @@ import Hydra.Chain (
   Chain (..),
   ChainCallback,
   ChainComponent,
-  ChainState (ChainState),
   OnChainTx (..),
   PostChainTx (..),
   PostTxError (..),
+  chainStateFromPostChainTx,
  )
 import Hydra.Chain.Direct.State (
   SomeOnChainHeadState (..),
@@ -159,9 +156,10 @@ withDirectChain ::
 withDirectChain tracer networkId iocp socketPath keyPair party cardanoKeys point callback action = do
   queue <- newTQueueIO
   withTinyWallet (contramap Wallet tracer) networkId keyPair iocp socketPath $ \wallet -> do
-    headState <-
-      newTVarIO $
-        SomeOnChainHeadState $
+    -- FIXME: this is not really a "state", but much rather static configuration
+    -- and could be made available to `fromPostChainTx` / `initialize` through
+    -- other means
+    let idleState =
           idleOnChainHeadState
             networkId
             (cardanoKeys \\ [verificationKey wallet])
@@ -184,6 +182,7 @@ withDirectChain tracer networkId iocp socketPath keyPair party cardanoKeys point
                 { postTx = \tx -> do
                     -- NOTE: trace would include full ChainState!
                     traceWith tracer $ ToPost tx
+                    let someChainState = fromMaybe (SomeOnChainHeadState idleState) $ chainStateFromPostChainTx tx
                     -- XXX(SN): 'finalizeTx' retries until a payment utxo is
                     -- found. See haddock for details
                     response <-
@@ -199,8 +198,8 @@ withDirectChain tracer networkId iocp socketPath keyPair party cardanoKeys point
                         -- bootstrap the init transaction.
                         -- For now, we bear with it and keep the static keys in
                         -- context.
-                        fromPostChainTx cardanoKeys wallet headState tx
-                          >>= finalizeTx wallet headState . toLedgerTx
+                        fromPostChainTx cardanoKeys wallet someChainState tx
+                          >>= finalizeTx wallet someChainState . toLedgerTx
                           >>= \vtx -> do
                             response <- newEmptyTMVar
                             writeTQueue queue (vtx, response)
@@ -214,7 +213,7 @@ withDirectChain tracer networkId iocp socketPath keyPair party cardanoKeys point
             connectTo
               (localSnocket iocp)
               nullConnectTracers
-              (versions networkId (client tracer (toConsensusPointHF <$> point) queue headState callback))
+              (versions networkId (client tracer (toConsensusPointHF <$> point) queue callback))
               socketPath
         )
     case res of
@@ -256,18 +255,17 @@ client ::
   Tracer m DirectChainLog ->
   Maybe (Point Block) ->
   TQueue m (ValidatedTx Era, TMVar m (Maybe (PostTxError Tx))) ->
-  TVar m SomeOnChainHeadState ->
   ChainCallback Tx m ->
   NodeToClientVersion ->
   OuroborosApplication 'InitiatorMode LocalAddress LByteString m () Void
-client tracer point queue headState callback nodeToClientV =
+client tracer point queue callback nodeToClientV =
   nodeToClientProtocols
     ( const $
         pure $
           NodeToClientProtocols
             { localChainSyncProtocol =
                 InitiatorProtocolOnly $
-                  let peer = chainSyncClient tracer callback headState point
+                  let peer = chainSyncClient tracer callback point
                    in MuxPeer nullTracer cChainSyncCodec (chainSyncClientPeer peer)
             , localTxSubmissionProtocol =
                 InitiatorProtocolOnly $
@@ -292,10 +290,9 @@ chainSyncClient ::
   (MonadSTM m, MonadThrow m) =>
   Tracer m DirectChainLog ->
   ChainCallback Tx m ->
-  TVar m SomeOnChainHeadState ->
   Maybe (Point Block) ->
   ChainSyncClient Block (Point Block) (Tip Block) m ()
-chainSyncClient tracer callback headState = \case
+chainSyncClient tracer callback = \case
   Nothing ->
     ChainSyncClient (pure initStIdle)
   Just startingPoint ->
@@ -373,11 +370,9 @@ chainSyncClient tracer callback headState = \case
             forM_ receivedTxs $ \tx ->
               -- TODO: logging on call-site of callback or make callback monadic
               callback $ \chainState -> do
-                -- TODO: extract chain-specific st from chainState
-                let st = undefined chainState
-                case observeSomeTx (fromLedgerTx tx) st of
+                case observeSomeTx (fromLedgerTx tx) chainState of
                   Just (onChainTx, _st') -> do
-                    -- TODO: Hydra.Direct.State would store st' now in onChainTx as chainState.
+                    -- NOTE: Hydra.Direct.State would store st' now in onChainTx as chainState.
                     Just onChainTx
                   Nothing ->
                     Nothing
@@ -441,11 +436,11 @@ txSubmissionClient tracer queue =
 finalizeTx ::
   (MonadSTM m, MonadThrow (STM m)) =>
   TinyWallet m ->
-  TVar m SomeOnChainHeadState ->
+  SomeOnChainHeadState ->
   ValidatedTx Era ->
   STM m (ValidatedTx Era)
-finalizeTx TinyWallet{sign, getUTxO, coverFee} headState partialTx = do
-  headUTxO <- (\(SomeOnChainHeadState st) -> getKnownUTxO st) <$> readTVar headState
+finalizeTx TinyWallet{sign, getUTxO, coverFee} someChainState partialTx = do
+  let headUTxO = (\(SomeOnChainHeadState st) -> getKnownUTxO st) someChainState
   walletUTxO <- fromLedgerUTxO . Ledger.UTxO <$> getUTxO
   coverFee (Ledger.unUTxO $ toLedgerUTxO headUTxO) partialTx >>= \case
     Left ErrNoPaymentUTxOFound ->
@@ -476,41 +471,43 @@ fromPostChainTx ::
   (MonadSTM m, MonadThrow (STM m)) =>
   [VerificationKey PaymentKey] ->
   TinyWallet m ->
-  TVar m SomeOnChainHeadState ->
+  SomeOnChainHeadState ->
   PostChainTx Tx ->
+  -- TODO: does not actually need STM anymore
   STM m Tx
-fromPostChainTx cardanoKeys wallet someHeadState tx = do
-  -- TODO: use this existential as 'ChainState tx'
-  SomeOnChainHeadState st <- readTVar someHeadState
-  case (tx, reifyState st) of
-    (InitTx params, TkIdle) -> do
-      getFuelUTxO wallet >>= \case
-        Just (fromLedgerTxIn -> seedInput, _) -> do
-          pure $ initialize params cardanoKeys seedInput st
-        Nothing ->
-          throwIO (NoSeedInput @Tx)
-    (AbortTx{}, TkInitialized) -> do
-      pure (abort st)
-    -- NOTE / TODO: 'CommitTx' also contains a 'Party' which seems redundant
-    -- here. The 'Party' is already part of the state and it is the only party
-    -- which can commit from this Hydra node.
-    (CommitTx{committed}, TkInitialized) -> do
-      either throwIO pure (commit committed st)
-    -- TODO: We do not rely on the utxo from the collect com tx here because the
-    -- chain head-state is already tracking UTXO entries locked by commit scripts,
-    -- and thus, can re-construct the committed UTXO for the collectComTx from
-    -- the commits' datums.
-    --
-    -- Perhaps we do want however to perform some kind of sanity check to ensure
-    -- that both states are consistent.
-    (CollectComTx{}, TkInitialized) -> do
-      pure (collect st)
-    (CloseTx{confirmedSnapshot}, TkOpen) ->
-      pure (close confirmedSnapshot st)
-    (FanoutTx{utxo}, TkClosed) ->
-      pure (fanout utxo st)
-    (_, _) ->
-      throwIO $ InvalidStateToPost tx
+fromPostChainTx cardanoKeys wallet someChainState tx =
+  -- XXX: I have absolutely no idea why this is necessary to make the "fancy"
+  -- 'OnChainHeadState st' type work
+  someChainState & \(SomeOnChainHeadState st) -> do
+    case (tx, reifyState st) of
+      (InitTx params, TkIdle) -> do
+        getFuelUTxO wallet >>= \case
+          Just (fromLedgerTxIn -> seedInput, _) -> do
+            pure $ initialize params cardanoKeys seedInput st
+          Nothing ->
+            throwIO (NoSeedInput @Tx)
+      (AbortTx{}, TkInitialized) -> do
+        pure (abort st)
+      -- NOTE / TODO: 'CommitTx' also contains a 'Party' which seems redundant
+      -- here. The 'Party' is already part of the state and it is the only party
+      -- which can commit from this Hydra node.
+      (CommitTx{committed}, TkInitialized) -> do
+        either throwIO pure (commit committed st)
+      -- TODO: We do not rely on the utxo from the collect com tx here because the
+      -- chain head-state is already tracking UTXO entries locked by commit scripts,
+      -- and thus, can re-construct the committed UTXO for the collectComTx from
+      -- the commits' datums.
+      --
+      -- Perhaps we do want however to perform some kind of sanity check to ensure
+      -- that both states are consistent.
+      (CollectComTx{}, TkInitialized) -> do
+        pure (collect st)
+      (CloseTx{confirmedSnapshot}, TkOpen) ->
+        pure (close confirmedSnapshot st)
+      (FanoutTx{utxo}, TkClosed) ->
+        pure (fanout utxo st)
+      (_, _) ->
+        throwIO $ InvalidStateToPost tx
 
 --
 -- Helpers

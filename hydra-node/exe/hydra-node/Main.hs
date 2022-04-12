@@ -5,10 +5,15 @@ module Main where
 import Hydra.Prelude
 
 import Hydra.API.Server (withAPIServer)
-import Hydra.Chain (Chain, ChainCallback, ChainState (ChainState))
+import Hydra.Chain (Chain, ChainCallback)
 import Hydra.Chain.Direct (withDirectChain)
 import Hydra.Chain.Direct.Util (readKeyPair, readVerificationKey)
-import Hydra.HeadLogic (Environment (..), Event (..), HeadState (ReadyState))
+import Hydra.HeadLogic (
+  Environment (..),
+  Event (..),
+  HeadState (ReadyState),
+  chainStateFromHeadState,
+ )
 import Hydra.Ledger.Cardano (Tx)
 import qualified Hydra.Ledger.Cardano as Ledger
 import Hydra.Ledger.Cardano.Configuration (
@@ -26,7 +31,6 @@ import Hydra.Network.Heartbeat (withHeartbeat)
 import Hydra.Network.Ouroboros (withIOManager, withOuroborosNetwork)
 import Hydra.Node (
   EventQueue (..),
-  HydraHead (..),
   HydraNode (..),
   createEventQueue,
   createHydraHead,
@@ -70,8 +74,7 @@ main = do
 
   chainCallback eq hh cont = do
     headState <- atomically $ queryHeadState hh
-    -- TODO: get chainState from headState
-    case cont (undefined headState) of
+    case chainStateFromHeadState headState >>= cont of
       Nothing -> pure ()
       Just onChainTx ->
         putEvent eq $ OnChainEvent{onChainTx}

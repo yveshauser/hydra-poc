@@ -13,7 +13,7 @@ import Hydra.Cardano.Api (
   UTxO,
   VerificationKey,
  )
-import Hydra.Chain (HeadParameters (..), OnChainTx)
+import Hydra.Chain (ChainState, HeadParameters (..), OnChainTx)
 import Hydra.Chain.Direct.State (
   HeadStateKind (..),
   ObserveTx,
@@ -100,6 +100,7 @@ genInitTx ctx =
     <*> genStIdle ctx
 
 genCommits ::
+  (Show (ChainState Tx)) =>
   HydraContext ->
   Tx ->
   Gen [Tx]
@@ -139,7 +140,7 @@ unsafeObserveTx tx st =
       <> renderTx tx
 
 unsafeCommit ::
-  HasCallStack =>
+  (HasCallStack, Show (ChainState Tx)) =>
   UTxO ->
   OnChainHeadState 'StInitialized ->
   Tx

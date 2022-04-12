@@ -17,6 +17,7 @@ import Control.Concurrent.STM.TChan (newBroadcastTChanIO, writeTChan)
 import Control.Concurrent.STM.TVar (TVar, modifyTVar', newTVarIO, readTVar)
 import Control.Exception (IOException)
 import qualified Data.Aeson as Aeson
+import Hydra.Chain (HasChainState)
 import Hydra.ClientInput (ClientInput)
 import Hydra.Ledger (IsTx (..))
 import Hydra.Logging (Tracer, traceWith)
@@ -65,7 +66,7 @@ type ServerCallback tx m = ClientInput tx -> m ()
 type ServerComponent tx m a = ServerCallback tx m -> (Server tx m -> m a) -> m a
 
 withAPIServer ::
-  IsTx tx =>
+  (IsTx tx, HasChainState tx) =>
   IP ->
   PortNumber ->
   Party ->
@@ -85,7 +86,7 @@ withAPIServer host port party tracer callback action = do
 
 runAPIServer ::
   forall tx.
-  IsTx tx =>
+  (IsTx tx, HasChainState tx) =>
   IP ->
   PortNumber ->
   Tracer IO APIServerLog ->

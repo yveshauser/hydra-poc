@@ -17,7 +17,7 @@ import Hydra.Cardano.Api (
   SerialiseAsRawBytes (..),
   UsingRawBytesHex (..),
  )
-import Hydra.Ledger (IsTx, TxIdType, UTxOType)
+import Hydra.Ledger (IsTx, UTxOType)
 import Hydra.Party (Party)
 import Hydra.Snapshot (ConfirmedSnapshot, Snapshot, SnapshotNumber)
 
@@ -46,13 +46,29 @@ data PostChainTx tx
   | FanoutTx {chainState :: ChainState tx, utxo :: UTxOType tx}
   deriving stock (Generic)
 
-deriving instance IsTx tx => Eq (PostChainTx tx)
-deriving instance IsTx tx => Show (PostChainTx tx)
-deriving instance IsTx tx => ToJSON (PostChainTx tx)
-deriving instance IsTx tx => FromJSON (PostChainTx tx)
+deriving instance (IsTx tx, Eq (ChainState tx)) => Eq (PostChainTx tx)
+deriving instance (IsTx tx, Show (ChainState tx)) => Show (PostChainTx tx)
+deriving instance (IsTx tx, ToJSON (ChainState tx)) => ToJSON (PostChainTx tx)
+deriving instance (IsTx tx, FromJSON (ChainState tx)) => FromJSON (PostChainTx tx)
 
-instance (Arbitrary tx, Arbitrary (UTxOType tx)) => Arbitrary (PostChainTx tx) where
+instance
+  ( Arbitrary tx
+  , Arbitrary (UTxOType tx)
+  , Arbitrary (ChainState tx)
+  ) =>
+  Arbitrary (PostChainTx tx)
+  where
   arbitrary = genericArbitrary
+
+chainStateFromPostChainTx :: PostChainTx tx -> Maybe (ChainState tx)
+chainStateFromPostChainTx = \case
+  InitTx{} -> Nothing
+  CommitTx{chainState} -> Just chainState
+  AbortTx{chainState} -> Just chainState
+  CollectComTx{chainState} -> Just chainState
+  CloseTx{chainState} -> Just chainState
+  ContestTx{chainState} -> Just chainState
+  FanoutTx{chainState} -> Just chainState
 
 -- REVIEW(SN): There is a similarly named type in plutus-ledger, so we might
 -- want to rename this
@@ -85,12 +101,18 @@ data OnChainTx tx
   | OnFanoutTx {chainState :: ChainState tx}
   deriving (Generic)
 
-deriving instance IsTx tx => Eq (OnChainTx tx)
-deriving instance IsTx tx => Show (OnChainTx tx)
-deriving instance IsTx tx => ToJSON (OnChainTx tx)
-deriving instance IsTx tx => FromJSON (OnChainTx tx)
+deriving instance (IsTx tx, Eq (ChainState tx)) => Eq (OnChainTx tx)
+deriving instance (IsTx tx, Show (ChainState tx)) => Show (OnChainTx tx)
+deriving instance (IsTx tx, ToJSON (ChainState tx)) => ToJSON (OnChainTx tx)
+deriving instance (IsTx tx, FromJSON (ChainState tx)) => FromJSON (OnChainTx tx)
 
-instance (Arbitrary tx, Arbitrary (UTxOType tx)) => Arbitrary (OnChainTx tx) where
+instance
+  ( Arbitrary tx
+  , Arbitrary (UTxOType tx)
+  , Arbitrary (ChainState tx)
+  ) =>
+  Arbitrary (OnChainTx tx)
+  where
   arbitrary = genericArbitrary
 
 -- | Exceptions thrown by 'postTx'.
@@ -106,18 +128,15 @@ data PostTxError tx
   | NoSeedInput
   | NoPaymentInput
   | InvalidStateToPost {txTried :: PostChainTx tx}
-  deriving (Exception, Generic, ToJSON, FromJSON)
+  deriving (Generic)
 
-deriving instance IsTx tx => Eq (PostTxError tx)
-deriving instance IsTx tx => Show (PostTxError tx)
+deriving instance (IsTx tx, Eq (ChainState tx)) => Eq (PostTxError tx)
+deriving instance (IsTx tx, Show (ChainState tx)) => Show (PostTxError tx)
+deriving instance (IsTx tx, Show (ChainState tx)) => Exception (PostTxError tx)
+deriving instance (IsTx tx, ToJSON (ChainState tx)) => ToJSON (PostTxError tx)
+deriving instance (IsTx tx, FromJSON (ChainState tx)) => FromJSON (PostTxError tx)
 
-instance
-  ( Arbitrary tx
-  , Arbitrary (UTxOType tx)
-  , Arbitrary (TxIdType tx)
-  ) =>
-  Arbitrary (PostTxError tx)
-  where
+instance (IsTx tx, HasChainState tx) => Arbitrary (PostTxError tx) where
   arbitrary = genericArbitrary
 
 -- | Handle to interface with the main chain network
@@ -134,3 +153,13 @@ type ChainCallback tx m = (ChainState tx -> Maybe (OnChainTx tx)) -> m ()
 
 -- | A type tying both posting and observing transactions into a single /Component/.
 type ChainComponent tx m a = ChainCallback tx m -> (Chain tx m -> m a) -> m a
+
+type family ChainState tx
+
+type HasChainState tx =
+  ( Eq (ChainState tx)
+  , Show (ChainState tx)
+  , Arbitrary (ChainState tx)
+  , ToJSON (ChainState tx)
+  , FromJSON (ChainState tx)
+  )
