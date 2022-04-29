@@ -343,7 +343,10 @@ type TxBodyContent build = Cardano.Api.TxBodyContent build Era
 pattern TxBodyContent ::
   TxIns build ->
   TxInsCollateral ->
+  TxInsReference Era ->
   [TxOut CtxTx] ->
+  TxTotalCollateral Era ->
+  TxReturnCollateral CtxTx Era ->
   TxFee ->
   (TxValidityLowerBound Era, TxValidityUpperBound Era) ->
   TxMetadataInEra ->
@@ -359,7 +362,10 @@ pattern TxBodyContent ::
 pattern TxBodyContent
   { txIns
   , txInsCollateral
+  , txInsReference
   , txOuts
+  , txTotalCollateral
+  , txReturnCollateral
   , txFee
   , txValidityRange
   , txMetadata
@@ -375,7 +381,10 @@ pattern TxBodyContent
   Cardano.Api.TxBodyContent
     txIns
     txInsCollateral
+    txInsReference
     txOuts
+    txTotalCollateral
+    txReturnCollateral
     txFee
     txValidityRange
     txMetadata
@@ -511,17 +520,26 @@ pattern TxMintValue{txMintValueInEra, txMintValueScriptWitnesses} <-
 type TxOut ctx = Cardano.Api.TxOut ctx Era
 {-# COMPLETE TxOut #-}
 
+-- | TxOut specialized for 'Era', hiding 'ReferenceScript'
 pattern TxOut :: AddressInEra -> Value -> TxOutDatum ctx -> TxOut ctx
 pattern TxOut{txOutAddress, txOutValue, txOutDatum} <-
-  Cardano.Api.TxOut txOutAddress (TxOutValue MultiAssetInAlonzoEra txOutValue) txOutDatum
+  Cardano.Api.TxOut
+    txOutAddress
+    (TxOutValue MultiAssetInAlonzoEra txOutValue)
+    txOutDatum
+    _txReferenceScript
   where
-    TxOut addr =
-      Cardano.Api.TxOut addr . TxOutValue MultiAssetInAlonzoEra
+    TxOut addr value datum =
+      Cardano.Api.TxOut
+        addr
+        (TxOutValue MultiAssetInAlonzoEra value)
+        datum
+        Cardano.Api.Shelley.ReferenceScriptNone
 
 -- ** TxOutDatum
 
 type TxOutDatum ctx = Cardano.Api.TxOutDatum ctx Era
-{-# COMPLETE TxOutDatumNone, TxOutDatumHash, TxOutDatum #-}
+{-# COMPLETE TxOutDatumNone, TxOutDatumHash, TxOutDatumInTx #-}
 
 pattern TxOutDatumNone :: TxOutDatum ctx
 pattern TxOutDatumNone <-
@@ -537,12 +555,12 @@ pattern TxOutDatumHash{txOutDatumHash} <-
     TxOutDatumHash =
       Cardano.Api.TxOutDatumHash ScriptDataInAlonzoEra
 
-pattern TxOutDatum :: ScriptData -> TxOutDatum CtxTx
-pattern TxOutDatum{txOutDatumScriptData} <-
-  Cardano.Api.TxOutDatum _ txOutDatumScriptData
+pattern TxOutDatumInTx :: ScriptData -> TxOutDatum CtxTx
+pattern TxOutDatumInTx{txOutDatumScriptData} <-
+  Cardano.Api.TxOutDatumInTx _ txOutDatumScriptData
   where
-    TxOutDatum =
-      Cardano.Api.TxOutDatum ScriptDataInAlonzoEra
+    TxOutDatumInTx =
+      Cardano.Api.TxOutDatumInTx ScriptDataInAlonzoEra
 
 -- ** TxScriptValidity
 
