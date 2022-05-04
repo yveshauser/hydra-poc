@@ -10,7 +10,7 @@ import PlutusTx.Prelude
 import Hydra.Contract.Commit (SerializedTxOut (..))
 import qualified Hydra.Contract.Commit as Commit
 import Hydra.Contract.Encoding (serialiseTxOuts)
-import Hydra.Contract.HeadState (Input (..), SnapshotNumber, State (..))
+import Hydra.Contract.HeadState (Input (..), Signature, SnapshotNumber, State (..))
 import qualified Hydra.Contract.Initial as Initial
 import Hydra.Data.ContestationPeriod (ContestationPeriod)
 import Hydra.Data.Party (Party (vkey))
@@ -47,7 +47,6 @@ import Plutus.V1.Ledger.Api (
   mkValidatorScript,
  )
 import Plutus.V1.Ledger.Contexts (findDatum, findDatumHash, findOwnInput, getContinuingOutputs)
-import Plutus.V1.Ledger.Crypto (Signature (getSignature))
 import Plutus.V1.Ledger.Value (valueOf)
 import PlutusTx (CompiledCode)
 import qualified PlutusTx
@@ -464,7 +463,7 @@ verifySnapshotSignature parties snapshotNumber utxoHash sigs =
 verifyPartySignature :: SnapshotNumber -> BuiltinByteString -> Party -> Signature -> Bool
 verifyPartySignature snapshotNumber utxoHash party signed =
   traceIfFalse "party signature verification failed" $
-    verifySignature (vkey party) message (getSignature signed)
+    verifySignature (vkey party) message signed
  where
   message =
     encodingToBuiltinByteString $
