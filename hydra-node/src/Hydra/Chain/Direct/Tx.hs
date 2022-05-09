@@ -194,14 +194,22 @@ collectComTx networkId vk (headInput, initialHeadOutput, ScriptDatumForTxIn -> h
       & addExtraRequiredSigners [verificationKeyHash vk]
  where
   headWitness =
-    BuildTxWith $ ScriptWitness scriptWitnessCtx $ mkScriptWitness headScript headDatumBefore headRedeemer
+    BuildTxWith $
+      ScriptWitness scriptWitnessCtx $
+        Api.PlutusScriptWitness
+          PlutusScriptV2InBabbage
+          PlutusScriptV2
+          headScript
+          headDatum
+          headRedeemer
+          (ExecutionUnits 0 0)
   headScript =
-    fromPlutusScript @PlutusScriptV1 Head.validatorScript
+    fromPlutusScript @PlutusScriptV2 Head.validatorScript
   headRedeemer =
     toScriptData Head.CollectCom
   headOutput =
     TxOut
-      (mkScriptAddress @PlutusScriptV1 networkId headScript)
+      (mkScriptAddress @PlutusScriptV2 networkId headScript)
       (txOutValue initialHeadOutput <> commitValue)
       headDatumAfter
   headDatumAfter =
@@ -327,7 +335,7 @@ contestTx vk Snapshot{number, utxo} sig (headInput, headOutputBefore, ScriptDatu
   headWitness =
     BuildTxWith $ ScriptWitness scriptWitnessCtx $ mkScriptWitness headScript headDatumBefore headRedeemer
   headScript =
-    fromPlutusScript @PlutusScriptV1 Head.validatorScript
+    fromPlutusScript @PlutusScriptV2 Head.validatorScript
   headRedeemer =
     toScriptData
       Head.Contest
@@ -365,8 +373,7 @@ fanoutTx utxo (headInput, headOutput, ScriptDatumForTxIn -> headDatumBefore) hea
     BuildTxWith $ ScriptWitness scriptWitnessCtx $ mkScriptWitness headScript headDatumBefore headRedeemer
 
   headScript =
-    fromPlutusScript @PlutusScriptV1 Head.validatorScript
-
+    fromPlutusScript @PlutusScriptV2 Head.validatorScript
   headRedeemer =
     toScriptData (Head.Fanout $ fromIntegral $ length utxo)
 
@@ -410,7 +417,7 @@ abortTx vk (headInput, initialHeadOutput, ScriptDatumForTxIn -> headDatumBefore)
   headWitness =
     BuildTxWith $ ScriptWitness scriptWitnessCtx $ mkScriptWitness headScript headDatumBefore headRedeemer
   headScript =
-    fromPlutusScript @PlutusScriptV1 Head.validatorScript
+    fromPlutusScript @PlutusScriptV2 Head.validatorScript
   headRedeemer =
     toScriptData Head.Abort
 
