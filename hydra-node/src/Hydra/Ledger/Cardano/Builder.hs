@@ -68,11 +68,11 @@ emptyTxBody =
     TxTotalCollateralNone
     TxReturnCollateralNone
     (TxFeeExplicit 0)
-    (TxValidityNoLowerBound, TxValidityNoUpperBound ValidityNoUpperBoundInAlonzoEra)
+    (TxValidityNoLowerBound, TxValidityNoUpperBound ValidityNoUpperBoundInBabbageEra)
     TxMetadataNone
     TxAuxScriptsNone
     TxExtraKeyWitnessesNone
-    (BuildTxWith $ Just $ fromLedgerPParams ShelleyBasedEraAlonzo def) -- FIXME
+    (BuildTxWith $ Just $ fromLedgerPParams ShelleyBasedEraBabbage def) -- FIXME
     TxWithdrawalsNone
     TxCertificatesNone
     TxUpdateProposalNone
