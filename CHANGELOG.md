@@ -10,12 +10,20 @@ changes.
 
 ## [0.6.0] - Unreleased
 
-#### Fixed
-
-- Head contract check UTxO hash upon closing the head [#338](https://github.com/input-output-hk/hydra-poc/pull/338). This prevents closing the head with arbitrary UTxO.
+#### Added
 
 - Implement on-chain contestation logic [#192](https://github.com/input-output-hk/hydra-poc/issues/192):
   + Node will automatically post a `Contest` transaction when it observes a `Close` with an obsolete snapshot
+
+#### Changed
+
+- **BREAKING** Switch to `BabbageEra` and `PlutusV2`
+  + `hydra-cardano-api` now uses `Era = BabbageEra` and constructs `PlutusV2` scripts
+  + `hydra-plutus` scripts now use the `serializeData` builtin to CBOR encode data on-chain
+
+#### Fixed
+
+- Head contract check UTxO hash upon closing the head [#338](https://github.com/input-output-hk/hydra-poc/pull/338). This prevents closing the head with arbitrary UTxO.
 
 ## [0.5.0] - 2022-05-06
 
