@@ -14,7 +14,6 @@ import Hydra.Cardano.Api
 import Hydra.Prelude
 
 import qualified Cardano.Api.UTxO as UTxO
-import Cardano.Binary (decodeFull', serialize')
 import qualified Data.Map as Map
 import Hydra.Chain (HeadId (..), HeadParameters (..), OnChainTx (..))
 import qualified Hydra.Contract.Commit as Commit
@@ -41,7 +40,6 @@ import Hydra.Party (Party, partyFromChain, partyToChain)
 import Hydra.Snapshot (Snapshot (..), SnapshotNumber)
 import Plutus.V1.Ledger.Api (fromBuiltin, fromData, toBuiltin)
 import qualified Plutus.V1.Ledger.Api as Plutus
-import Plutus.V2.Ledger.Api (toData)
 
 type UTxOWithScript = (TxIn, TxOut CtxUTxO, ScriptData)
 
@@ -170,8 +168,7 @@ mkCommitDatum party headValidatorHash utxo =
     Nothing ->
       Nothing
     Just (_i, o) ->
-      -- REVIEW: Depends on the ToCBOR instance of 'Data' in plutus, is this fine?
-      Commit.SerializedTxOut . toBuiltin . serialize' . toData <$> toPlutusTxOut o
+      Commit.serializeTxOut o
 
 -- | Create a transaction collecting all "committed" utxo and opening a Head,
 -- i.e. driving the Head script state.
@@ -218,10 +215,9 @@ collectComTx networkId vk (headInput, initialHeadOutput, ScriptDatumForTxIn -> h
       _ -> Nothing
 
   utxoHash =
-    Head.hashPreSerializedCommits $ mapMaybe (extractSerialisedTxOut . snd . snd) orderedCommits
+    Head.hashSerializedTxOuts $ mapMaybe (extractSerialisedTxOut . snd . snd) orderedCommits
 
-  orderedCommits =
-    Map.toList commits
+  orderedCommits = Map.toList commits
 
   mkCommit (commitInput, (_commitOutput, commitDatum)) =
     ( commitInput
@@ -598,12 +594,8 @@ observeCommitTx networkId initials tx = do
 convertTxOut :: Maybe Commit.SerializedTxOut -> Maybe (TxOut CtxUTxO)
 convertTxOut = \case
   Nothing -> Nothing
-  Just (Commit.SerializedTxOut outBytes) ->
-    -- XXX(SN): these errors might be more severe and we could throw an
-    -- exception here?
-    case fromLedgerTxOut <$> decodeFull' (fromBuiltin outBytes) of
-      Right result -> Just result
-      Left{} -> error "couldn't deserialize serialized output in commit's datum."
+  Just serializedTxOut ->
+    Commit.deserializeTxOut serializedTxOut
 
 -- TODO(SN): obviously the observeCollectComTx/observeAbortTx can be DRYed.. deliberately hold back on it though
 
