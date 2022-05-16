@@ -41,6 +41,7 @@ import Hydra.Party (Party, partyFromChain, partyToChain)
 import Hydra.Snapshot (Snapshot (..), SnapshotNumber)
 import Plutus.V1.Ledger.Api (fromBuiltin, fromData, toBuiltin)
 import qualified Plutus.V1.Ledger.Api as Plutus
+import Plutus.V2.Ledger.Api (toData)
 
 type UTxOWithScript = (TxIn, TxOut CtxUTxO, ScriptData)
 
@@ -169,7 +170,8 @@ mkCommitDatum party headValidatorHash utxo =
     Nothing ->
       Nothing
     Just (_i, o) ->
-      Just $ Commit.SerializedTxOut (toBuiltin $ serialize' $ toLedgerTxOut o)
+      -- REVIEW: Depends on the ToCBOR instance of 'Data' in plutus, is this fine?
+      Commit.SerializedTxOut . toBuiltin . serialize' . toData <$> toPlutusTxOut o
 
 -- | Create a transaction collecting all "committed" utxo and opening a Head,
 -- i.e. driving the Head script state.
