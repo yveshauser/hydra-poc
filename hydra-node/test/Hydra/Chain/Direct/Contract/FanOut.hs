@@ -17,7 +17,6 @@ import Hydra.Ledger.Cardano (
   genOutput,
   genUTxOWithSimplifiedAddresses,
   genValue,
-  hashTxOuts,
  )
 import Hydra.Party (partyToChain)
 import Plutus.Orphans ()
@@ -54,7 +53,7 @@ healthyFanoutDatum :: Head.State
 healthyFanoutDatum =
   Head.Closed
     { snapshotNumber = 1
-    , utxoHash = toBuiltin $ hashTxOuts $ toList healthyFanoutUTxO
+    , utxoHash = hashTxOuts . mapMaybe toPlutusTxOut $ toList healthyFanoutUTxO
     , parties = partyToChain <$> arbitrary `generateWith` 42
     }
 

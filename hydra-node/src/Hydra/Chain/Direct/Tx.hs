@@ -25,7 +25,7 @@ import Hydra.Contract.MintAction (MintAction (Burn, Mint))
 import Hydra.Crypto (MultiSignature, toPlutusSignatures)
 import Hydra.Data.ContestationPeriod (contestationPeriodFromDiffTime, contestationPeriodToDiffTime)
 import qualified Hydra.Data.Party as OnChain
-import Hydra.Ledger.Cardano (hashTxOuts)
+import Hydra.Ledger.Cardano ()
 import Hydra.Ledger.Cardano.Builder (
   addExtraRequiredSigners,
   addInputs,
@@ -38,8 +38,8 @@ import Hydra.Ledger.Cardano.Builder (
  )
 import Hydra.Party (Party, partyFromChain, partyToChain)
 import Hydra.Snapshot (Snapshot (..), SnapshotNumber)
-import Plutus.V1.Ledger.Api (fromBuiltin, fromData, toBuiltin)
-import qualified Plutus.V1.Ledger.Api as Plutus
+import Plutus.V2.Ledger.Api (fromBuiltin, fromData, toBuiltin)
+import qualified Plutus.V2.Ledger.Api as Plutus
 
 type UTxOWithScript = (TxIn, TxOut CtxUTxO, ScriptData)
 
@@ -342,7 +342,7 @@ contestTx vk Snapshot{number, utxo} sig (headInput, headOutputBefore, ScriptDatu
         , utxoHash
         , parties
         }
-  utxoHash = toBuiltin $ hashTxOuts $ toList utxo
+  utxoHash = Head.hashTxOuts . mapMaybe toPlutusTxOut $ toList utxo
 
 fanoutTx ::
   -- | Snapshotted UTxO to fanout on layer 1
@@ -595,7 +595,9 @@ convertTxOut :: Maybe Commit.SerializedTxOut -> Maybe (TxOut CtxUTxO)
 convertTxOut = \case
   Nothing -> Nothing
   Just serializedTxOut ->
-    Commit.deserializeTxOut serializedTxOut
+    case Commit.deserializeTxOut serializedTxOut of
+      Nothing -> error "error deserializing SerializedTxOut"
+      Just o -> Just o
 
 -- TODO(SN): obviously the observeCollectComTx/observeAbortTx can be DRYed.. deliberately hold back on it though
 
