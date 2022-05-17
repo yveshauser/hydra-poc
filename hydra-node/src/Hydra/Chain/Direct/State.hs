@@ -63,7 +63,7 @@ import Hydra.Chain.Direct.Tx (
   ownInitial,
  )
 import qualified Hydra.Data.Party as OnChain
-import Hydra.Ledger.Cardano (hashTxOuts)
+import Hydra.Ledger (IsTx (hashUTxO))
 import Hydra.Party (Party)
 import Hydra.Snapshot (ConfirmedSnapshot (..), Snapshot (..))
 import qualified Text.Show
@@ -309,7 +309,7 @@ close confirmedSnapshot OnChainHeadState{ownVerificationKey, stateMachine} =
     ConfirmedSnapshot{snapshot = Snapshot{number, utxo}, signatures} ->
       CloseWithConfirmedSnapshot
         { snapshotNumber = number
-        , closeUtxoHash = hashTxOuts $ toList utxo
+        , closeUtxoHash = hashUTxO @Tx utxo
         , signatures
         }
 
