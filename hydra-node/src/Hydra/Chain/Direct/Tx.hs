@@ -38,7 +38,7 @@ import Hydra.Ledger.Cardano.Builder (
  )
 import Hydra.Party (Party, partyFromChain, partyToChain)
 import Hydra.Snapshot (Snapshot (..), SnapshotNumber)
-import Plutus.V2.Ledger.Api (fromBuiltin, fromData, toBuiltin)
+import Plutus.V2.Ledger.Api (fromBuiltin, fromData, toBuiltin, toBuiltinData)
 import qualified Plutus.V2.Ledger.Api as Plutus
 
 type UTxOWithScript = (TxIn, TxOut CtxUTxO, ScriptData)
@@ -342,7 +342,7 @@ contestTx vk Snapshot{number, utxo} sig (headInput, headOutputBefore, ScriptDatu
         , utxoHash
         , parties
         }
-  utxoHash = Head.hashTxOuts . mapMaybe toPlutusTxOut $ toList utxo
+  utxoHash = Head.hashTxOuts . mapMaybe (fmap toBuiltinData . toPlutusTxOut) $ toList utxo
 
 fanoutTx ::
   -- | Snapshotted UTxO to fanout on layer 1

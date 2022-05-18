@@ -49,7 +49,7 @@ import qualified Hydra.Contract.Head as Head
 import qualified Hydra.Contract.Initial as Initial
 import Hydra.Ledger (IsTx (..), Ledger (..), ValidationError (..))
 import Hydra.Ledger.Cardano.Json ()
-import Plutus.V2.Ledger.Api (fromBuiltin)
+import Plutus.V2.Ledger.Api (fromBuiltin, toBuiltinData)
 import Test.Cardano.Ledger.Babbage.Serialisation.Generators ()
 import Test.QuickCheck (
   choose,
@@ -114,7 +114,7 @@ instance IsTx Tx where
 
   txId = getTxId . getTxBody
   balance = foldMap txOutValue
-  hashUTxO = fromBuiltin . Head.hashTxOuts . mapMaybe toPlutusTxOut . toList
+  hashUTxO = fromBuiltin . Head.hashTxOuts . mapMaybe (fmap toBuiltinData . toPlutusTxOut) . toList
 
 instance ToCBOR Tx where
   toCBOR = CBOR.encodeBytes . serialize' . toLedgerTx

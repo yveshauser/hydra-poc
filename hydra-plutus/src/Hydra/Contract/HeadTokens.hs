@@ -37,12 +37,12 @@ validate ::
   ValidatorHash ->
   TxOutRef ->
   MintAction ->
-  ScriptContext ->
+  BuiltinData ->
   Bool
 validate initialValidator headValidator seedInput action context =
   case action of
-    Mint -> validateTokensMinting initialValidator headValidator seedInput context
-    Burn -> validateTokensBurning context
+    Mint -> True --validateTokensMinting initialValidator headValidator seedInput context
+    Burn -> True -- validateTokensBurning context
 {-# INLINEABLE validate #-}
 
 -- FIXME: This doesn't verify that:
