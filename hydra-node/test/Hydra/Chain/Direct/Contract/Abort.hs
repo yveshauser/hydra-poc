@@ -8,6 +8,7 @@ module Hydra.Chain.Direct.Contract.Abort where
 import Hydra.Cardano.Api
 
 import qualified Cardano.Api.UTxO as UTxO
+import Data.List (intersectBy)
 import qualified Data.Map as Map
 import Data.Maybe (fromJust)
 import Hydra.Chain (HeadParameters (..))
@@ -20,15 +21,16 @@ import Hydra.Chain.Direct.Contract.Mutation (
   headTxIn,
  )
 import Hydra.Chain.Direct.Fixture (genForParty, testNetworkId, testPolicyId, testSeedInput)
-import Hydra.Chain.Direct.Tx (InitObservation (..), UTxOWithScript, abortTx, mkHeadOutputInitial, mkHeadTokenScript)
-import Hydra.Chain.Direct.TxSpec (drop3rd, genAbortableOutputs)
+import Hydra.Chain.Direct.Tx (InitObservation (..), UTxOWithScript, abortTx, assetNameFromVerificationKey, headValue, mkCommitDatum, mkHeadOutputInitial, mkHeadTokenScript)
 import qualified Hydra.Contract.Commit as Commit
+import qualified Hydra.Contract.Head as Head
 import qualified Hydra.Contract.HeadState as Head
 import qualified Hydra.Contract.Initial as Initial
-import Hydra.Ledger.Cardano (genVerificationKey)
+import Hydra.Ledger.Cardano (adaOnly, genOneUTxOFor, genVerificationKey)
 import Hydra.Party (Party, partyToChain)
 import Hydra.Prelude
-import Test.QuickCheck (Property, choose, counterexample, elements, oneof, suchThat)
+import Plutus.V1.Ledger.Api (toData)
+import Test.QuickCheck (Property, choose, counterexample, elements, oneof, suchThat, vectorOf)
 
 --
 -- AbortTx
@@ -42,6 +44,8 @@ healthyAbortTx =
     UTxO.singleton (headInput, toUTxOContext headOutput)
       <> UTxO (Map.fromList (drop3rd <$> healthyInitials))
       <> UTxO (Map.fromList (drop3rd <$> healthyCommits))
+
+  drop3rd (a, b, _) = (a, b)
 
   tx =
     either (error . show) id $
@@ -88,6 +92,88 @@ healthyCommits :: [UTxOWithScript]
   -- to test healthy abort txs with varied combinations of inital and commit
   -- outputs
   generateWith (genAbortableOutputs healthyParties `suchThat` thereIsAtLeastOneCommit) 42
+
+genAbortableOutputs :: [Party] -> Gen ([UTxOWithScript], [UTxOWithScript])
+genAbortableOutputs parties =
+  go `suchThat` notConflict
+ where
+  go = do
+    (initParties, commitParties) <- (`splitAt` parties) <$> choose (0, length parties)
+    initials <- mapM genInitial initParties
+    commits <- fmap (\(a, (b, c)) -> (a, b, c)) . Map.toList <$> generateCommitUTxOs commitParties
+    pure (initials, commits)
+
+  notConflict (is, cs) =
+    null $ intersectBy (\(i, _, _) (c, _, _) -> i == c) is cs
+
+  genInitial p =
+    mkInitial (genVerificationKey `genForParty` p) <$> arbitrary
+
+  mkInitial ::
+    VerificationKey PaymentKey ->
+    TxIn ->
+    UTxOWithScript
+  mkInitial vk txin =
+    ( txin
+    , initialTxOut vk
+    , fromPlutusData (toData initialDatum)
+    )
+
+  initialTxOut :: VerificationKey PaymentKey -> TxOut CtxUTxO
+  initialTxOut vk =
+    toUTxOContext $
+      TxOut
+        (mkScriptAddress @PlutusScriptV1 testNetworkId initialScript)
+        ( headValue
+            <> valueFromList
+              [ (AssetId testPolicyId (assetNameFromVerificationKey vk), 1)
+              ]
+        )
+        (mkTxOutDatum initialDatum)
+
+  initialScript = fromPlutusScript Initial.validatorScript
+
+  initialDatum = Initial.datum ()
+
+-- | Generate a UTXO representing /commit/ outputs for a given list of `Party`.
+-- FIXME: This function is very complicated and it's hard to understand it after a while
+generateCommitUTxOs :: [Party] -> Gen (Map.Map TxIn (TxOut CtxUTxO, ScriptData))
+generateCommitUTxOs parties = do
+  txins <- vectorOf (length parties) (arbitrary @TxIn)
+  let vks = (\p -> (genVerificationKey `genForParty` p, p)) <$> parties
+  committedUTxO <-
+    vectorOf (length parties) $
+      oneof
+        [ do
+            singleUTxO <- fmap adaOnly <$> (genOneUTxOFor =<< arbitrary)
+            pure $ head <$> nonEmpty (UTxO.pairs singleUTxO)
+        , pure Nothing
+        ]
+  let commitUTxO =
+        zip txins $
+          uncurry mkCommitUTxO <$> zip vks committedUTxO
+  pure $ Map.fromList commitUTxO
+ where
+  mkCommitUTxO :: (VerificationKey PaymentKey, Party) -> Maybe (TxIn, TxOut CtxUTxO) -> (TxOut CtxUTxO, ScriptData)
+  mkCommitUTxO (vk, party) utxo =
+    ( toUTxOContext $
+        TxOut
+          (mkScriptAddress @PlutusScriptV1 testNetworkId commitScript)
+          commitValue
+          (mkTxOutDatum commitDatum)
+    , fromPlutusData (toData commitDatum)
+    )
+   where
+    commitValue =
+      mconcat
+        [ lovelaceToValue (Lovelace 2000000)
+        , maybe mempty (txOutValue . snd) utxo
+        , valueFromList
+            [ (AssetId testPolicyId (assetNameFromVerificationKey vk), 1)
+            ]
+        ]
+    commitScript = fromPlutusScript Commit.validatorScript
+    commitDatum = mkCommitDatum party Head.validatorHash utxo
 
 thereIsAtLeastOneCommit :: ([UTxOWithScript], [UTxOWithScript]) -> Bool
 thereIsAtLeastOneCommit (is, cs) = not (null cs) && not (null is)
