@@ -82,7 +82,8 @@ import qualified Text.Show
 data OnChainHeadState (st :: HeadStateKind) = OnChainHeadState
   { networkId :: NetworkId
   , peerVerificationKeys :: [VerificationKey PaymentKey]
-  , ownVerificationKey :: VerificationKey PaymentKey
+  , -- TODO: This seems to be unused now
+    ownVerificationKey :: VerificationKey PaymentKey
   , ownParty :: Party
   , stateMachine :: HydraStateMachine st
   }
@@ -390,8 +391,7 @@ instance HasTransition 'StIdle where
 
 instance ObserveTx 'StIdle 'StInitialized where
   observeTx tx OnChainHeadState{networkId, peerVerificationKeys, ownParty, ownVerificationKey} = do
-    let allVerificationKeys = ownVerificationKey : peerVerificationKeys
-    observation <- observeInitTx networkId allVerificationKeys ownParty tx
+    observation <- observeInitTx networkId ownParty tx
     let InitObservation
           { threadOutput
           , initials
