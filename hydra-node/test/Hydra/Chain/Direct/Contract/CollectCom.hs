@@ -8,7 +8,6 @@ import Hydra.Cardano.Api
 import Hydra.Prelude hiding (label)
 
 import qualified Cardano.Api.UTxO as UTxO
-import qualified Data.Map as Map
 import Data.Maybe (fromJust)
 import Hydra.Chain.Direct.Contract.Mutation (
   Mutation (..),
@@ -25,17 +24,19 @@ import Hydra.Chain.Direct.Fixture (
   testSeedInput,
  )
 import Hydra.Chain.Direct.Tx (
-  InitialThreadOutput (..),
+  InitObservation (..),
   assetNameFromVerificationKey,
   collectComTx,
   headPolicyId,
   headValue,
   mkCommitDatum,
   mkHeadOutput,
+  mkHeadTokenScript,
  )
 import qualified Hydra.Contract.Commit as Commit
 import qualified Hydra.Contract.Head as Head
 import qualified Hydra.Contract.HeadState as Head
+import Hydra.Data.ContestationPeriod (contestationPeriodToDiffTime)
 import qualified Hydra.Data.ContestationPeriod as OnChain
 import qualified Hydra.Data.Party as OnChain
 import Hydra.Ledger.Cardano (genAdaOnlyUTxO, genTxIn, genVerificationKey)
@@ -55,17 +56,28 @@ healthyCollectComTx =
   (tx, lookupUTxO)
  where
   lookupUTxO =
-    UTxO.singleton (healthyHeadInput, healthyHeadResolvedInput) <> UTxO (fst <$> commits)
+    UTxO.singleton (healthyHeadInput, healthyHeadResolvedInput)
+      <> UTxO.fromPairs ((\(i, o, _) -> (i, o)) <$> commits)
 
   tx =
     collectComTx
       testNetworkId
       somePartyCardanoVerificationKey
-      initialThreadOutput
-      commits
+      initObservation
 
   somePartyCardanoVerificationKey = flip generateWith 42 $ do
     genForParty genVerificationKey <$> elements healthyParties
+
+  initObservation =
+    InitObservation
+      { threadOutput = (healthyHeadInput, healthyHeadResolvedInput, headDatum)
+      , initials = []
+      , commits
+      , headId = arbitrary `generateWith` 42
+      , headTokenScript = mkHeadTokenScript testSeedInput -- TODO: get rid of this / compute from headId
+      , parties = healthyParties
+      , contestationPeriod = contestationPeriodToDiffTime healthyContestationPeriod
+      }
 
   committedUTxO =
     generateWith
@@ -73,17 +85,9 @@ healthyCollectComTx =
       42
 
   commits =
-    (uncurry healthyCommitOutput <$> zip healthyParties committedUTxO)
-      & Map.fromList
+    uncurry healthyCommitOutput <$> zip healthyParties committedUTxO
 
   headDatum = fromPlutusData $ toData healthyCollectComInitialDatum
-
-  initialThreadOutput =
-    InitialThreadOutput
-      { initialThreadUTxO = (healthyHeadInput, healthyHeadResolvedInput, headDatum)
-      , initialParties = healthyOnChainParties
-      , initialContestationPeriod = healthyContestationPeriod
-      }
 
 healthyContestationPeriod :: OnChain.ContestationPeriod
 healthyContestationPeriod =
@@ -125,13 +129,11 @@ genCommittableTxOut =
 healthyCommitOutput ::
   Party ->
   (TxIn, TxOut CtxUTxO) ->
-  (TxIn, (TxOut CtxUTxO, ScriptData))
+  (TxIn, TxOut CtxUTxO, ScriptData)
 healthyCommitOutput party committed =
   ( txIn
-  ,
-    ( toCtxUTxOTxOut (TxOut commitAddress commitValue (mkTxOutDatum commitDatum))
-    , fromPlutusData (toData commitDatum)
-    )
+  , toCtxUTxOTxOut (TxOut commitAddress commitValue (mkTxOutDatum commitDatum))
+  , fromPlutusData (toData commitDatum)
   )
  where
   txIn = genTxIn `genForParty` party

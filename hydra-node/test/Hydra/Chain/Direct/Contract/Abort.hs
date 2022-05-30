@@ -1,5 +1,5 @@
+{-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE TypeApplications #-}
-{-# OPTIONS_GHC -Wno-incomplete-uni-patterns #-}
 
 -- | Mutation-based script validator tests for the abort transaction where a
 -- 'healthyAbortTx' gets mutated by an arbitrary 'AbortMutation'.
@@ -20,7 +20,7 @@ import Hydra.Chain.Direct.Contract.Mutation (
   headTxIn,
  )
 import Hydra.Chain.Direct.Fixture (genForParty, testNetworkId, testPolicyId, testSeedInput)
-import Hydra.Chain.Direct.Tx (UTxOWithScript, abortTx, mkHeadOutputInitial, mkHeadTokenScript)
+import Hydra.Chain.Direct.Tx (InitObservation (..), UTxOWithScript, abortTx, mkHeadOutputInitial, mkHeadTokenScript)
 import Hydra.Chain.Direct.TxSpec (drop3rd, genAbortableOutputs)
 import qualified Hydra.Contract.Commit as Commit
 import qualified Hydra.Contract.HeadState as Head
@@ -47,10 +47,18 @@ healthyAbortTx =
     either (error . show) id $
       abortTx
         somePartyCardanoVerificationKey
-        (headInput, toUTxOContext headOutput, headDatum)
-        headTokenScript
-        (Map.fromList (tripleToPair <$> healthyInitials))
-        (Map.fromList (tripleToPair <$> healthyCommits))
+        initObservation
+
+  initObservation =
+    InitObservation
+      { threadOutput = (headInput, toUTxOContext headOutput, headDatum)
+      , initials = healthyInitials
+      , commits = healthyCommits
+      , headId = arbitrary `generateWith` 42
+      , headTokenScript = headTokenScript -- TODO: get rid of this / compute from headId
+      , parties = undefined -- TODO: not needed for commits
+      , contestationPeriod = undefined -- TODO: not needed for commits
+      }
 
   somePartyCardanoVerificationKey = flip generateWith 42 $ do
     genForParty genVerificationKey <$> elements healthyParties
@@ -72,8 +80,6 @@ healthyAbortTx =
   -- XXX: We loose type information by dealing with 'TxOut CtxTx' where datums
   -- are optional
   unsafeGetDatum = fromJust . getScriptData
-
-  tripleToPair (a, b, c) = (a, (b, c))
 
 healthyInitials :: [UTxOWithScript]
 healthyCommits :: [UTxOWithScript]

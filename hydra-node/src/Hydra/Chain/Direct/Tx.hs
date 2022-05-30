@@ -15,7 +15,6 @@ import Hydra.Prelude
 
 import qualified Cardano.Api.UTxO as UTxO
 import Cardano.Binary (decodeFull', serialize')
-import qualified Data.Map as Map
 import Hydra.Chain (ContestationPeriod, HeadId (..), HeadParameters (..))
 import qualified Hydra.Contract.Commit as Commit
 import qualified Hydra.Contract.Head as Head
@@ -45,14 +44,6 @@ import qualified Plutus.V1.Ledger.Api as Plutus
 
 -- | Needed on-chain data to create Head transactions.
 type UTxOWithScript = (TxIn, TxOut CtxUTxO, ScriptData)
-
--- | Representation of the Head output after an Init transaction.
-data InitialThreadOutput = InitialThreadOutput
-  { initialThreadUTxO :: UTxOWithScript
-  , initialContestationPeriod :: OnChain.ContestationPeriod
-  , initialParties :: [OnChain.Party]
-  }
-  deriving (Eq, Show)
 
 -- | Representation of the Head output after a CollectCom transaction.
 data OpenThreadOutput = OpenThreadOutput
@@ -143,22 +134,25 @@ mkInitialOutput networkId tokenPolicyId (verificationKeyHash -> pkh) =
 -- | Craft a commit transaction which includes the "committed" utxo as a datum.
 commitTx ::
   NetworkId ->
-  Party ->
+  -- | Party identifier and corresponding cardano key of the commiter.
+  (Party, VerificationKey PaymentKey) ->
   -- | A single UTxO to commit to the Head
   -- We currently limit committing one UTxO to the head because of size limitations.
   Maybe (TxIn, TxOut CtxUTxO) ->
-  -- | The initial output (sent to each party) which should contain the PT and is
-  -- locked by initial script
-  (TxIn, TxOut CtxUTxO, Hash PaymentKey) ->
-  Tx
-commitTx networkId party utxo (initialInput, out, vkh) =
-  unsafeBuildTransaction $
-    emptyTxBody
-      & addInputs [(initialInput, initialWitness_)]
-      & addVkInputs (maybeToList mCommittedInput)
-      & addExtraRequiredSigners [vkh]
-      & addOutputs [commitOutput]
+  InitObservation ->
+  Maybe Tx
+commitTx networkId (party, vk) utxo initObservation = do
+  (initialInput, out, _) <- ownInitial headTokenScript vk initials
+  pure $
+    unsafeBuildTransaction $
+      emptyTxBody
+        & addInputs [(initialInput, initialWitness_)]
+        & addVkInputs (maybeToList mCommittedInput)
+        & addExtraRequiredSigners [verificationKeyHash vk]
+        & addOutputs [commitOutput out]
  where
+  InitObservation{initials, headTokenScript} = initObservation
+
   initialWitness_ =
     BuildTxWith $ ScriptWitness scriptWitnessCtx $ mkScriptWitness initialScript initialDatum initialRedeemer
   initialScript =
@@ -170,13 +164,13 @@ commitTx networkId party utxo (initialInput, out, vkh) =
       Initial.Commit (toPlutusTxOutRef <$> mCommittedInput)
   mCommittedInput =
     fst <$> utxo
-  commitOutput =
-    TxOut commitAddress commitValue commitDatum
+  commitOutput out =
+    TxOut commitAddress (commitValue out) commitDatum
   commitScript =
     fromPlutusScript Commit.validatorScript
   commitAddress =
     mkScriptAddress @PlutusScriptV1 networkId commitScript
-  commitValue =
+  commitValue out =
     txOutValue out <> maybe mempty (txOutValue . snd) utxo
   commitDatum =
     mkTxOutDatum $ mkCommitDatum party Head.validatorHash utxo
@@ -197,26 +191,24 @@ collectComTx ::
   NetworkId ->
   -- | Party who's authorizing this transaction
   VerificationKey PaymentKey ->
-  -- | Everything needed to spend the Head state-machine output.
-  InitialThreadOutput ->
-  -- | Data needed to spend the commit output produced by each party.
-  -- Should contain the PT and is locked by @ν_commit@ script.
-  Map TxIn (TxOut CtxUTxO, ScriptData) ->
+  InitObservation ->
   Tx
-collectComTx networkId vk initialThreadOutput commits =
+collectComTx networkId vk initObservation =
   unsafeBuildTransaction $
     emptyTxBody
       & addInputs ((headInput, headWitness) : (mkCommit <$> orderedCommits))
       & addOutputs [headOutput]
       & addExtraRequiredSigners [verificationKeyHash vk]
  where
-  InitialThreadOutput
-    { initialThreadUTxO =
-      (headInput, initialHeadOutput, ScriptDatumForTxIn -> headDatumBefore)
-    , initialParties
-    , initialContestationPeriod
-    } =
-      initialThreadOutput
+  InitObservation
+    { threadOutput = (headInput, initialHeadOutput, ScriptDatumForTxIn -> headDatumBefore)
+    , commits
+    , parties
+    , contestationPeriod
+    } = initObservation
+
+  orderedCommits = sortOn (\(i, _, _) -> i) commits
+
   headWitness =
     BuildTxWith $ ScriptWitness scriptWitnessCtx $ mkScriptWitness headScript headDatumBefore headRedeemer
   headScript =
@@ -229,7 +221,15 @@ collectComTx networkId vk initialThreadOutput commits =
       (txOutValue initialHeadOutput <> commitValue)
       headDatumAfter
   headDatumAfter =
-    mkTxOutDatum Head.Open{Head.parties = initialParties, utxoHash, contestationPeriod = initialContestationPeriod}
+    mkTxOutDatum Head.Open{Head.parties = onChainParties, utxoHash, contestationPeriod = onChainContestationPeriod}
+
+  onChainParties = partyToChain <$> parties
+
+  utxoHash =
+    Head.hashPreSerializedCommits $ mapMaybe (\(_, _, d) -> extractSerialisedTxOut d) orderedCommits
+
+  onChainContestationPeriod = contestationPeriodFromDiffTime contestationPeriod
+
   -- NOTE: We hash tx outs in an order that is recoverable on-chain.
   -- The simplest thing to do, is to make sure commit inputs are in the same
   -- order as their corresponding committed utxo.
@@ -239,20 +239,14 @@ collectComTx networkId vk initialThreadOutput commits =
       Just ((_, _, Just o) :: Commit.DatumType) -> Just o
       _ -> Nothing
 
-  utxoHash =
-    Head.hashPreSerializedCommits $ mapMaybe (extractSerialisedTxOut . snd . snd) orderedCommits
-
-  orderedCommits =
-    Map.toList commits
-
-  mkCommit (commitInput, (_commitOutput, commitDatum)) =
+  mkCommit (commitInput, _commitOutput, commitDatum) =
     ( commitInput
     , mkCommitWitness commitDatum
     )
   mkCommitWitness (ScriptDatumForTxIn -> commitDatum) =
     BuildTxWith $ ScriptWitness scriptWitnessCtx $ mkScriptWitness commitScript commitDatum commitRedeemer
   commitValue =
-    mconcat $ txOutValue . fst <$> Map.elems commits
+    foldMap (\(_, out, _) -> txOutValue out) orderedCommits
   commitScript =
     fromPlutusScript @PlutusScriptV1 Commit.validatorScript
   commitRedeemer =
@@ -430,19 +424,12 @@ data AbortTxError = OverlappingInputs
 abortTx ::
   -- | Party who's authorizing this transaction
   VerificationKey PaymentKey ->
-  -- | Everything needed to spend the Head state-machine output.
-  (TxIn, TxOut CtxUTxO, ScriptData) ->
-  -- | Script for monetary policy to burn tokens
-  PlutusScript ->
-  -- | Data needed to spend the initial output sent to each party to the Head.
-  -- Should contain the PT and is locked by initial script.
-  Map TxIn (TxOut CtxUTxO, ScriptData) ->
-  -- | Data needed to spend commit outputs.
-  -- Should contain the PT and is locked by commit script.
-  Map TxIn (TxOut CtxUTxO, ScriptData) ->
+  InitObservation ->
   Either AbortTxError Tx
-abortTx vk (headInput, initialHeadOutput, ScriptDatumForTxIn -> headDatumBefore) headTokenScript initialsToAbort commitsToAbort
-  | isJust (lookup headInput initialsToAbort) =
+abortTx vk initObservation
+  -- XXX: Can't we encode this as an invariant / make it impossible to represent
+  -- in 'InitObservation'?
+  | hasOverlappingInputs =
     Left OverlappingInputs
   | otherwise =
     Right $
@@ -453,6 +440,18 @@ abortTx vk (headInput, initialHeadOutput, ScriptDatumForTxIn -> headDatumBefore)
           & burnTokens headTokenScript Burn headTokens
           & addExtraRequiredSigners [verificationKeyHash vk]
  where
+  hasOverlappingInputs =
+    isJust . find (\(i, _, _) -> i == headInput) $ initialsToAbort <> commitsToAbort
+
+  InitObservation
+    { threadOutput = (headInput, headOutput, headScriptData)
+    , headTokenScript
+    , initials = initialsToAbort
+    , commits = commitsToAbort
+    } = initObservation
+
+  headDatumBefore = ScriptDatumForTxIn headScriptData
+
   headWitness =
     BuildTxWith $ ScriptWitness scriptWitnessCtx $ mkScriptWitness headScript headDatumBefore headRedeemer
   headScript =
@@ -460,23 +459,23 @@ abortTx vk (headInput, initialHeadOutput, ScriptDatumForTxIn -> headDatumBefore)
   headRedeemer =
     toScriptData Head.Abort
 
-  initialInputs = mkAbortInitial <$> Map.toList initialsToAbort
+  initialInputs = mkAbortInitial <$> initialsToAbort
 
-  commitInputs = mkAbortCommit <$> Map.toList commitsToAbort
+  commitInputs = mkAbortCommit <$> commitsToAbort
 
   headTokens =
     headTokensFromValue headTokenScript $
       mconcat
-        [ txOutValue initialHeadOutput
-        , foldMap (txOutValue . fst) initialsToAbort
-        , foldMap (txOutValue . fst) commitsToAbort
+        [ txOutValue headOutput
+        , foldMap (\(_, o, _) -> txOutValue o) initialsToAbort
+        , foldMap (\(_, o, _) -> txOutValue o) commitsToAbort
         ]
 
   -- NOTE: Abort datums contain the datum of the spent state-machine input, but
   -- also, the datum of the created output which is necessary for the
   -- state-machine on-chain validator to control the correctness of the
   -- transition.
-  mkAbortInitial (initialInput, (_, ScriptDatumForTxIn -> initialDatum)) =
+  mkAbortInitial (initialInput, _, ScriptDatumForTxIn -> initialDatum) =
     (initialInput, mkAbortWitness initialDatum)
   mkAbortWitness initialDatum =
     BuildTxWith $ ScriptWitness scriptWitnessCtx $ mkScriptWitness initialScript initialDatum initialRedeemer
@@ -485,7 +484,7 @@ abortTx vk (headInput, initialHeadOutput, ScriptDatumForTxIn -> headDatumBefore)
   initialRedeemer =
     toScriptData $ Initial.redeemer Initial.Abort
 
-  mkAbortCommit (commitInput, (_, ScriptDatumForTxIn -> commitDatum)) =
+  mkAbortCommit (commitInput, _, ScriptDatumForTxIn -> commitDatum) =
     (commitInput, mkCommitWitness commitDatum)
   mkCommitWitness commitDatum =
     BuildTxWith $ ScriptWitness scriptWitnessCtx $ mkScriptWitness commitScript commitDatum commitRedeemer
@@ -494,7 +493,7 @@ abortTx vk (headInput, initialHeadOutput, ScriptDatumForTxIn -> headDatumBefore)
   commitRedeemer =
     toScriptData (Commit.redeemer Commit.Abort)
 
-  commitOutputs = mapMaybe (mkCommitOutput . snd) $ Map.elems commitsToAbort
+  commitOutputs = mapMaybe (\(_, _, d) -> mkCommitOutput d) commitsToAbort
 
   mkCommitOutput :: ScriptData -> Maybe (TxOut CtxTx)
   mkCommitOutput x =
@@ -505,17 +504,18 @@ abortTx vk (headInput, initialHeadOutput, ScriptDatumForTxIn -> headDatumBefore)
 
 -- * Observe Hydra Head transactions
 
+-- XXX: Invariant: all TxIn of threadOutput, initials and commits are disjoint
 data InitObservation = InitObservation
   { -- | The state machine UTxO produced by the Init transaction
     -- This output should always be present and 'threaded' across all
     -- transactions.
     -- NOTE(SN): The Head's identifier is somewhat encoded in the TxOut's address
     -- XXX(SN): Data and [OnChain.Party] are overlapping
-    threadOutput :: InitialThreadOutput
+    threadOutput :: UTxOWithScript
   , initials :: [UTxOWithScript]
   , commits :: [UTxOWithScript]
   , headId :: HeadId
-  , headTokenScript :: PlutusScript
+  , headTokenScript :: PlutusScript -- TODO: compute from HeadId?
   , contestationPeriod :: ContestationPeriod
   , parties :: [Party]
   }
@@ -540,15 +540,10 @@ observeInitTx networkId party tx = do
   pure
     InitObservation
       { threadOutput =
-          InitialThreadOutput
-            { initialThreadUTxO =
-                ( mkTxIn tx ix
-                , toCtxUTxOTxOut headOut
-                , fromLedgerData headData
-                )
-            , initialParties = ps
-            , initialContestationPeriod = cp
-            }
+          ( mkTxIn tx ix
+          , toCtxUTxOTxOut headOut
+          , fromLedgerData headData
+          )
       , initials
       , commits = []
       , headId = mkHeadId headTokenPolicyId
@@ -580,12 +575,6 @@ observeInitTx networkId party tx = do
 
   initialScript = fromPlutusScript Initial.validatorScript
 
-  assetNames headAssetName =
-    [ assetName
-    | (AssetId _ assetName, _) <- txMintAssets tx
-    , assetName /= headAssetName
-    ]
-
 data CommitObservation = CommitObservation
   { commitOutput :: UTxOWithScript
   , party :: Party
@@ -602,11 +591,10 @@ data CommitObservation = CommitObservation
 -- - Reconstruct the committed UTxO from both values (tx input and output).
 observeCommitTx ::
   NetworkId ->
-  -- | Known (remaining) initial tx inputs.
-  [TxIn] ->
+  InitObservation ->
   Tx ->
   Maybe CommitObservation
-observeCommitTx networkId initials tx = do
+observeCommitTx networkId InitObservation{initials} tx = do
   initialTxIn <- findInitialTxIn
   mCommittedTxIn <- decodeInitialRedeemer initialTxIn
 
@@ -630,8 +618,10 @@ observeCommitTx networkId initials tx = do
       , committed
       }
  where
+  initialTxIns = map (\(i, _, _) -> i) initials
+
   findInitialTxIn =
-    case filter (`elem` initials) (txIns' tx) of
+    case filter (`elem` initialTxIns) (txIns' tx) of
       [input] -> Just input
       _ -> Nothing
 

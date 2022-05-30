@@ -51,10 +51,8 @@ import Hydra.Chain.Direct.Tx (
   ContestObservation (..),
   FanoutObservation (..),
   InitObservation (..),
-  InitialThreadOutput (..),
   OpenThreadOutput (..),
   PointInTime,
-  UTxOWithScript,
   abortTx,
   closeTx,
   collectComTx,
@@ -69,7 +67,6 @@ import Hydra.Chain.Direct.Tx (
   observeContestTx,
   observeFanoutTx,
   observeInitTx,
-  ownInitial,
  )
 import Hydra.Ledger.Cardano (hashTxOuts)
 import Hydra.Party (Party)
@@ -101,11 +98,7 @@ data OnChainHeadState (st :: HeadStateKind) = OnChainHeadState
 data HydraStateMachine (st :: HeadStateKind) where
   Idle :: HydraStateMachine 'StIdle
   Initialized ::
-    { initialThreadOutput :: InitialThreadOutput
-    , initialInitials :: [UTxOWithScript]
-    , initialCommits :: [UTxOWithScript]
-    , initialHeadId :: HeadId
-    , initialHeadTokenScript :: PlutusScript
+    { initObservation :: InitObservation
     } ->
     HydraStateMachine 'StInitialized
   Open ::
@@ -132,10 +125,17 @@ getKnownUTxO OnChainHeadState{stateMachine} =
   case stateMachine of
     Idle{} ->
       mempty
-    Initialized{initialThreadOutput = InitialThreadOutput{initialThreadUTxO}, initialInitials, initialCommits} ->
-      UTxO $
-        Map.fromList $
-          take2Of3 initialThreadUTxO : (take2Of3 <$> (initialInitials <> initialCommits))
+    Initialized
+      { initObservation =
+        InitObservation
+          { threadOutput
+          , initials
+          , commits
+          }
+      } ->
+        UTxO $
+          Map.fromList $
+            take2Of3 threadOutput : (take2Of3 <$> (initials <> commits))
     Open{openThreadOutput = OpenThreadOutput{openThreadUTxO = (i, o, _)}} ->
       UTxO.singleton (i, o)
     Closed{closedThreadOutput = ClosedThreadOutput{closedThreadUTxO = (i, o, _)}} ->
@@ -252,22 +252,22 @@ commit ::
   OnChainHeadState 'StInitialized ->
   Either (PostTxError Tx) Tx
 commit utxo st@OnChainHeadState{networkId, ownParty, ownVerificationKey, stateMachine} = do
-  case ownInitial initialHeadTokenScript ownVerificationKey initialInitials of
-    Nothing ->
-      Left (CannotFindOwnInitial{knownUTxO = getKnownUTxO st})
-    Just initial ->
-      case UTxO.pairs utxo of
-        [aUTxO] -> do
-          rejectByronAddress aUTxO
-          Right $ commitTx networkId ownParty (Just aUTxO) initial
-        [] -> do
-          Right $ commitTx networkId ownParty Nothing initial
-        _ ->
-          Left (MoreThanOneUTxOCommitted @Tx)
+  case UTxO.pairs utxo of
+    [aUTxO] -> do
+      rejectByronAddress aUTxO
+      doCommit $ Just aUTxO
+    [] -> do
+      doCommit Nothing
+    _ ->
+      Left (MoreThanOneUTxOCommitted @Tx)
  where
+  doCommit toCommit =
+    case commitTx networkId (ownParty, ownVerificationKey) toCommit initObservation of
+      Nothing -> Left $ CannotFindOwnInitial{knownUTxO = getKnownUTxO st}
+      Just tx -> Right tx
+
   Initialized
-    { initialInitials
-    , initialHeadTokenScript
+    { initObservation
     } = stateMachine
 
   rejectByronAddress :: (TxIn, TxOut CtxUTxO) -> Either (PostTxError Tx) ()
@@ -282,32 +282,25 @@ abort ::
   OnChainHeadState 'StInitialized ->
   Tx
 abort OnChainHeadState{ownVerificationKey, stateMachine} = do
-  let InitialThreadOutput{initialThreadUTxO = (i, o, dat)} = initialThreadOutput
-      initials = Map.fromList $ map tripleToPair initialInitials
-      commits = Map.fromList $ map tripleToPair initialCommits
-   in case abortTx ownVerificationKey (i, o, dat) (initialHeadTokenScript stateMachine) initials commits of
-        Left err ->
-          -- FIXME: Exception with MonadThrow?
-          error $ show err
-        Right tx ->
-          tx
+  case abortTx ownVerificationKey initObservation of
+    Left err ->
+      -- FIXME: Exception with MonadThrow?
+      error $ show err
+    Right tx ->
+      tx
  where
   Initialized
-    { initialThreadOutput
-    , initialInitials
-    , initialCommits
+    { initObservation
     } = stateMachine
 
 collect ::
   OnChainHeadState 'StInitialized ->
   Tx
 collect OnChainHeadState{networkId, ownVerificationKey, stateMachine} = do
-  let commits = Map.fromList $ fmap tripleToPair initialCommits
-   in collectComTx networkId ownVerificationKey initialThreadOutput commits
+  collectComTx networkId ownVerificationKey initObservation
  where
   Initialized
-    { initialThreadOutput
-    , initialCommits
+    { initObservation
     } = stateMachine
 
 close ::
@@ -392,15 +385,7 @@ instance HasTransition 'StIdle where
 instance ObserveTx 'StIdle 'StInitialized where
   observeTx tx OnChainHeadState{networkId, peerVerificationKeys, ownParty, ownVerificationKey} = do
     observation <- observeInitTx networkId ownParty tx
-    let InitObservation
-          { threadOutput
-          , initials
-          , commits
-          , headId
-          , headTokenScript
-          , contestationPeriod
-          , parties
-          } = observation
+    let InitObservation{contestationPeriod, parties} = observation
     let event = OnInitTx{contestationPeriod, parties}
     let st' =
           OnChainHeadState
@@ -408,14 +393,7 @@ instance ObserveTx 'StIdle 'StInitialized where
             , ownParty
             , ownVerificationKey
             , peerVerificationKeys
-            , stateMachine =
-                Initialized
-                  { initialThreadOutput = threadOutput
-                  , initialInitials = initials
-                  , initialCommits = commits
-                  , initialHeadId = headId
-                  , initialHeadTokenScript = headTokenScript
-                  }
+            , stateMachine = Initialized{initObservation = observation}
             }
     pure (event, st')
 
@@ -432,28 +410,30 @@ instance HasTransition 'StInitialized where
 
 instance ObserveTx 'StInitialized 'StInitialized where
   observeTx tx st@OnChainHeadState{networkId, stateMachine} = do
-    let initials = fst3 <$> initialInitials
-    observation <- observeCommitTx networkId initials tx
+    observation <- observeCommitTx networkId initObservation tx
     let CommitObservation{commitOutput, party, committed} = observation
     let event = OnCommitTx{party, committed}
     let st' =
           st
             { stateMachine =
-                stateMachine
-                  { initialInitials =
-                      -- NOTE: A commit tx has been observed and thus we can
-                      -- remove all it's inputs from our tracked initials
-                      filter ((`notElem` txIns' tx) . fst3) initialInitials
-                  , initialCommits =
-                      commitOutput : initialCommits
+                Initialized
+                  { initObservation =
+                      initObservation
+                        { initials =
+                            -- NOTE: A commit tx has been observed and thus we can
+                            -- remove all it's inputs from our tracked initials
+                            filter (\(i, _, _) -> i `notElem` txIns' tx) initials
+                        , commits =
+                            commitOutput : commits
+                        }
                   }
             }
     pure (event, st')
    where
     Initialized
-      { initialCommits
-      , initialInitials
-      } = stateMachine
+      { initObservation = initObservation@InitObservation{initials, commits}
+      } =
+        stateMachine
 
 instance ObserveTx 'StInitialized 'StOpen where
   observeTx tx st@OnChainHeadState{networkId, peerVerificationKeys, ownVerificationKey, ownParty, stateMachine} = do
@@ -472,15 +452,14 @@ instance ObserveTx 'StInitialized 'StOpen where
                 Open
                   { openThreadOutput = threadOutput
                   , openHeadId = initialHeadId
-                  , openHeadTokenScript = initialHeadTokenScript
+                  , openHeadTokenScript = headTokenScript
                   , openUtxoHash = utxoHash
                   }
             }
     pure (event, st')
    where
     Initialized
-      { initialHeadId
-      , initialHeadTokenScript
+      { initObservation = InitObservation{headId = initialHeadId, headTokenScript}
       } = stateMachine
 
 instance ObserveTx 'StInitialized 'StIdle where
@@ -637,12 +616,6 @@ instance Eq (TransitionFrom st) where
 --
 -- Helpers
 --
-
-fst3 :: (a, b, c) -> a
-fst3 (a, _b, _c) = a
-
-tripleToPair :: (a, b, c) -> (a, (b, c))
-tripleToPair (a, b, c) = (a, (b, c))
 
 take2Of3 :: (a, b, c) -> (a, b)
 take2Of3 (a, b, _c) = (a, b)

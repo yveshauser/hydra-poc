@@ -16,7 +16,7 @@ import Hydra.Chain.Direct.Contract.Mutation (
  )
 import Hydra.Chain.Direct.Fixture (genForParty, testNetworkId)
 import Hydra.Chain.Direct.State (HeadStateKind (..), OnChainHeadState, idleOnChainHeadState)
-import Hydra.Chain.Direct.Tx (hydraHeadV1AssetName, initTx)
+import Hydra.Chain.Direct.Tx (initTx)
 import Hydra.Ledger.Cardano (genOneUTxOFor, genValue, genVerificationKey)
 import Hydra.Party (Party)
 import Test.QuickCheck (choose, elements, oneof, suchThat, vectorOf)

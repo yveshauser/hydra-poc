@@ -14,8 +14,9 @@ import Hydra.Chain.Direct.Contract.Mutation (
   Mutation (..),
   SomeMutation (..),
  )
+import Hydra.Chain.Direct.Fixture (testSeedInput)
 import qualified Hydra.Chain.Direct.Fixture as Fixture
-import Hydra.Chain.Direct.Tx (commitTx, headPolicyId, mkInitialOutput)
+import Hydra.Chain.Direct.Tx (InitObservation (..), commitTx, headPolicyId, mkHeadTokenScript, mkInitialOutput)
 import Hydra.Ledger.Cardano (
   genAddressInEra,
   genOutput,
@@ -37,19 +38,29 @@ healthyCommitTx =
     UTxO.singleton (initialInput, toUTxOContext initialOutput)
       <> UTxO.singleton healthyCommittedUTxO
   tx =
-    commitTx
-      Fixture.testNetworkId
-      commitParty
-      (Just healthyCommittedUTxO)
-      (initialInput, toUTxOContext initialOutput, initialPubKeyHash)
+    fromJust $
+      commitTx
+        Fixture.testNetworkId
+        (commitParty, commitVerificationKey)
+        (Just healthyCommittedUTxO)
+        initObservation
+
+  initObservation =
+    InitObservation
+      { threadOutput = undefined -- TODO: not needed for commits
+      , initials = [(initialInput, toUTxOContext initialOutput, undefined)] -- TODO: script data unused
+      , commits = []
+      , headId = arbitrary `generateWith` 42
+      , headTokenScript = mkHeadTokenScript testSeedInput -- TODO: get rid of this / compute from headId
+      , parties = undefined -- TODO: not needed for commits
+      , contestationPeriod = undefined -- TODO: not needed for commits
+      }
 
   initialInput = generateWith arbitrary 42
 
   initialOutput = mkInitialOutput Fixture.testNetworkId policyId commitVerificationKey
 
   policyId = headPolicyId initialInput
-
-  initialPubKeyHash = verificationKeyHash commitVerificationKey
 
   commitVerificationKey :: VerificationKey PaymentKey
   commitVerificationKey = generateWith arbitrary 42
