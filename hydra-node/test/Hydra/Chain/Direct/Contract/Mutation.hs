@@ -143,7 +143,6 @@ import qualified Data.Map as Map
 import qualified Data.Sequence.Strict as StrictSeq
 import qualified Data.Set as Set
 import qualified Hydra.Chain.Direct.Fixture as Fixture
-import Hydra.Chain.Direct.State (SomeOnChainHeadState (..), observeSomeTx, reifyState)
 import qualified Hydra.Contract.Head as Head
 import qualified Hydra.Contract.HeadState as Head
 import Hydra.Ledger.Cardano (genKeyPair, genOutput, renderTxWithUTxO)
@@ -159,10 +158,8 @@ import Test.Hydra.Prelude
 import Test.QuickCheck (
   Property,
   checkCoverage,
-  conjoin,
   counterexample,
   forAll,
-  forAllBlind,
   property,
   suchThat,
   vector,
@@ -186,27 +183,6 @@ propMutationOnChain (tx, utxo) genMutation =
       & propTransactionDoesNotValidate
       & genericCoverTable [label]
       & checkCoverage
-
-propMutationOffChain ::
-  (Tx, UTxO) ->
-  ((Tx, UTxO) -> Gen SomeMutation) ->
-  Gen SomeOnChainHeadState ->
-  Property
-propMutationOffChain (tx, utxo) genMutation genSt =
-  forAll @_ @Property (genMutation (tx, utxo)) $ \SomeMutation{label, mutation} ->
-    forAllBlind genSt $ \st ->
-      (tx, utxo)
-        & applyMutation mutation
-        & ( \x ->
-              conjoin
-                [ propTransactionValidates x
-                    & counterexample "Transaction should have validated but didn't."
-                , propTransactionIsNotObserved x st
-                    & counterexample "Transaction should have not been observed but was observed."
-                ]
-          )
-        & genericCoverTable [label]
-        & checkCoverage
 
 -- | A 'Property' checking some (transaction, UTxO) pair is invalid.
 propTransactionDoesNotValidate :: (Tx, UTxO) -> Property
@@ -235,20 +211,6 @@ propTransactionValidates (tx, lookupUTxO) =
             & counterexample ("Tx: " <> renderTxWithUTxO lookupUTxO tx)
             & counterexample ("Redeemer report: " <> show redeemerReport)
             & counterexample "Phase-2 validation failed"
-
--- | A 'Property' checking some (on-chain valid) (transaction, UTxO) is not
--- properly observe given a configuration.
-propTransactionIsNotObserved :: (Tx, UTxO) -> SomeOnChainHeadState -> Property
-propTransactionIsNotObserved (tx, _) st =
-  case observeSomeTx tx st of
-    Nothing ->
-      property True
-    Just (onChainTx, SomeOnChainHeadState st') ->
-      property False
-        & counterexample ("Observed tx: " <> strawmanGetConstr onChainTx)
-        & counterexample ("New head state: " <> show (reifyState st'))
- where
-  strawmanGetConstr = toString . Prelude.head . words . show
 
 -- * Mutations
 

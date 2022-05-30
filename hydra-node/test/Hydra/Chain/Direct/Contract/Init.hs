@@ -94,29 +94,3 @@ genInitMutation (tx, _utxo) =
     , SomeMutation MutateDropSeedInput <$> do
         pure $ RemoveInput healthySeedInput
     ]
-
--- These are mutations we expect to be valid from an on-chain standpoint, yet
--- invalid for the off-chain observation. There's mainly only the `init`
--- transaction which is in this situation, because the on-chain parameters are
--- specified during the init and there's no way to check, on-chain, that they
--- correspond to what a node expects in terms of configuration.
-genObserveInitMutation :: (Tx, UTxO) -> Gen SomeMutation
-genObserveInitMutation (tx, _utxo) =
-  oneof
-    [ SomeMutation MutateSomePT <$> do
-        let minted = txMintAssets tx
-        vk' <- genVerificationKey `suchThat` (`notElem` healthyCardanoKeys)
-        let minted' = swapTokenName (verificationKeyHash vk') minted
-        pure $ ChangeMintedValue (valueFromList minted')
-    ]
- where
-  swapTokenName :: Hash PaymentKey -> [(AssetId, Quantity)] -> [(AssetId, Quantity)]
-  swapTokenName vkh = \case
-    [] ->
-      []
-    x@(AdaAssetId, _) : xs ->
-      x : swapTokenName vkh xs
-    x@(AssetId pid assetName, q) : xs ->
-      if assetName == hydraHeadV1AssetName
-        then x : swapTokenName vkh xs
-        else (AssetId pid (AssetName $ serialiseToRawBytes vkh), q) : xs
