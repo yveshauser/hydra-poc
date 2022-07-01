@@ -192,6 +192,8 @@ applyTx :: UTxOType Payment -> Payment -> UTxOType Payment
 applyTx utxo Payment{from, to, value} =
   (to, value) : List.delete (from, value) utxo
 
+data ObservationResult = TxInvalid | TxPending | TxConfirmed
+
 instance
   ( MonadSTM m
   , MonadDelay m
@@ -240,6 +242,8 @@ instance
       , command :: ClientInput Payment
       } ->
       Action (WorldState m) ()
+    NewTx :: Payment -> Action (WorldState m) ObservationResult
+    Assert :: Var a -> (a -> Bool) -> Action (WorldState m) Bool
 
   -- The monad in which we `perform` actions.
   -- NOTE: We are using a `State` monad in order to be able to retrieve a handle
