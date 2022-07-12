@@ -66,17 +66,6 @@ healthyCloseTx =
 healthySlotNo :: SlotNo
 healthySlotNo = arbitrary `generateWith` 42
 
-addParticipationTokens :: [Party] -> TxOut CtxUTxO -> TxOut CtxUTxO
-addParticipationTokens parties (TxOut addr val datum) =
-  TxOut addr val' datum
- where
-  val' =
-    val
-      <> valueFromList
-        [ (AssetId testPolicyId (assetNameFromVerificationKey cardanoVk), 1)
-        | cardanoVk <- genForParty genVerificationKey <$> parties
-        ]
-
 healthyClosingSnapshot :: ClosingSnapshot
 healthyClosingSnapshot =
   CloseWithConfirmedSnapshot
